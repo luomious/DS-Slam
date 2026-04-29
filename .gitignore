@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Build output
+orbslam3/build/
+orbslam3/build-mingw/
+orbslam3/lib/
+orbslam3/Thirdparty/DBoW2/lib/
+orbslam3/Thirdparty/g2o/bin/
+slam-system/build/
+
+# Large datasets and model artifacts
+data/
+datasets/
+*.onnx
+*.pt
+*.pth
+*.bin
+*.tar.gz
+*.tgz
+
+# Generated output
+output/
+segmentation/python/output/
+visualization/backend/__pycache__/
+
+# Local/editor files
+.vscode/
+.idea/
+*.log
