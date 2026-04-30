@@ -29,3 +29,15 @@ visualization/backend/__pycache__/
 .vscode/
 .idea/
 *.log
+
+# Local runner artifacts (generated during troubleshooting)
+_run_*.txt
+_run_*.py
+
+# Local helper scripts (experimental)
+orbslam3/_*.py
+
+# Thirdparty local build artifacts
+orbslam3/Thirdparty/DBoW2/build_static/
+
+orbslam3/build_static/
