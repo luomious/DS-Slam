@@ -1,0 +1,53 @@
+project:
+  name: DS-SLAM
+  root: .
+  profile: dev
+
+toolchain:
+  msys2_root: E:/msys64
+  mingw64_shell: E:/msys64/mingw64.exe
+  cmake_generator: MinGW Makefiles
+  build_type: Release
+  parallel_jobs: 4
+
+orbslam3:
+  root: orbslam3
+  build_dir: orbslam3/build-mingw
+  vocabulary: orbslam3/Vocabulary/ORBvoc.txt
+  rgbd_exe: orbslam3/Examples/RGB-D/rgbd_tum.exe
+  camera_configs:
+    tum1: orbslam3/Examples/RGB-D/TUM1.yaml
+    tum3: orbslam3/Examples/RGB-D/TUM3.yaml
+
+datasets:
+  fr1_xyz:
+    label: fr1_xyz static baseline
+    root: data/tum-rgbd_dataset_freiburg1_xyz
+    camera: tum1
+    association: data/tum-rgbd_dataset_freiburg1_xyz/associations/rgbd_dataset_freiburg1_xyz.txt
+  fr3_walking_xyz:
+    label: fr3_walking_xyz dynamic benchmark
+    root: data/tum-rgbd_dataset_freiburg3_walking_xyz
+    camera: tum3
+    association: data/tum-rgbd_dataset_freiburg3_walking_xyz/associations/rgbd_dataset_freiburg3_walking_xyz.txt
+  fr3_sitting_xyz:
+    label: fr3_sitting_xyz static control
+    root: data/tum-rgbd_dataset_freiburg3_sitting_xyz
+    camera: tum3
+    association: data/tum-rgbd_dataset_freiburg3_sitting_xyz/associations/rgbd_dataset_freiburg3_sitting_xyz.txt
+
+segmentation:
+  model_path: segmentation/onnx/yolo11n_seg.onnx
+  input_size: [640, 480]
+  device: cuda
+
+visualization:
+  host: 127.0.0.1
+  port: 8000
+  ws_path: /ws/slam
+  static_dir: visualization/frontend
+
+output:
+  logs: output/logs
+  trajectories: output/trajectories
+  maps: output/maps

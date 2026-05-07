@@ -1,0 +1,13 @@
+# Copy this file to config/local.yaml for machine-specific overrides.
+# config/local.yaml is ignored by git.
+
+project:
+  root: E:/VSCode/VSCode-Workspace/DS-Slam
+
+toolchain:
+  msys2_root: E:/msys64
+  mingw64_shell: E:/msys64/mingw64.exe
+
+visualization:
+  host: 127.0.0.1
+  port: 8000
