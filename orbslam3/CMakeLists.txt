@@ -20,20 +20,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 
-# Check C++11 or C++0x support
+# Check C++17 or C++14 support
 include(CheckCXXCompilerFlag)
+CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
 CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
-CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
-if(COMPILER_SUPPORTS_CXX14)
+if(COMPILER_SUPPORTS_CXX17)
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+   add_definitions(-DCOMPILEDWITHC17)
+   message(STATUS "Using flag -std=c++17 (required for ONNX Runtime).")
+elseif(COMPILER_SUPPORTS_CXX14)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
    add_definitions(-DCOMPILEDWITHC14)
    message(STATUS "Using flag -std=c++14 (Eigen 5.x requires C++14).")
-elseif(COMPILER_SUPPORTS_CXX11)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-   add_definitions(-DCOMPILEDWITHC11)
-   message(STATUS "Using flag -std=c++11.")
 else()
-   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
+   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} requires at least C++14. Please use a different C++ compiler.")
 endif()
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
@@ -75,6 +75,20 @@ endif()
 # realsense2 - optional
 find_package(realsense2 QUIET)
 
+# DS-SLAM M3: ONNX Runtime
+find_path(ONNXRUNTIME_INCLUDE_DIR "onnxruntime_cxx_api.h"
+    HINTS "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/include"
+             "E:/msys64/mingw64/include"
+             "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
+if(ONNXRUNTIME_INCLUDE_DIR)
+    message(STATUS "ONNX Runtime found at: ${ONNXRUNTIME_INCLUDE_DIR}")
+else()
+    message(STATUS "ONNX Runtime headers not found - semantic segmentation disabled")
+endif()
+
+set(DS_SLAM_INCLUDE_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/include")
+set(DS_SLAM_LIB_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
+
 include_directories(
 ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/include
@@ -82,7 +96,11 @@ ${PROJECT_SOURCE_DIR}/include/CameraModels
 ${PROJECT_SOURCE_DIR}/Thirdparty/Sophus
 ${EIGEN3_INCLUDE_DIR}
 ${Pangolin_INCLUDE_DIRS}
+${DS_SLAM_INCLUDE_DIR}
 )
+if(ONNXRUNTIME_INCLUDE_DIR)
+    include_directories(${ONNXRUNTIME_INCLUDE_DIR})
+endif()
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
@@ -162,6 +180,8 @@ g2o
 -lboost_serialization-mt
 -lcrypto
 -lopengl32
+${DS_SLAM_LIB_DIR}/libSemanticSegmentator.a
+${DS_SLAM_LIB_DIR}/libonnxruntime.dll.a
 )
 
 # If RealSense SDK is found the library is added and its examples compiled

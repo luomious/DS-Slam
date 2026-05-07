@@ -40,6 +40,7 @@
 #include "ImuTypes.h"
 #include "Settings.h"
 
+#include "SemanticSegmentator.h"
 
 namespace ORB_SLAM3
 {
@@ -186,6 +187,10 @@ public:
 
     float GetImageScale();
 
+    // DS-SLAM M3: semantic segmentation
+    void InitSegmentator(const string &onnxPath);
+    SemanticSegmentator* GetSegmentator() { return mpSegmentator; }
+
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
     void InsertResizeTime(double& time);
@@ -262,6 +267,9 @@ private:
     string mStrVocabularyFilePath;
 
     Settings* settings_;
+
+    // DS-SLAM M3: semantic segmentator for dynamic object masking
+    SemanticSegmentator* mpSegmentator = nullptr;
 };
 
 }// namespace ORB_SLAM
