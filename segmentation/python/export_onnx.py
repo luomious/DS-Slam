@@ -6,7 +6,7 @@ DS-SLAM M2: Export YOLO11n-seg to ONNX
 Exports the trained/initialized model to ONNX format for C++ deployment (M3).
 
 Usage:
-  python export_onnx.py [--output path/to/model.onnx] [--opset 14] [--dynamic]
+  python export_onnx.py [--output path/to/model.onnx] [--opset 18] [--dynamic]
 """
 
 import argparse
@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 
 import torch
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).parent))
 from models.lscd import YOLO11nSeg
@@ -23,7 +28,7 @@ def export_onnx(
     model: torch.nn.Module,
     output_path: str,
     input_size: tuple = (640, 640),
-    opset: int = 14,
+    opset: int = 18,
     dynamic: bool = True,
 ):
     """Export model to ONNX format.
@@ -102,8 +107,8 @@ def main():
     parser = argparse.ArgumentParser(description="Export DS-SLAM model to ONNX")
     parser.add_argument("--output", type=str, default=None,
                        help="Output ONNX path (default: ../onnx/yolo11n_seg.onnx)")
-    parser.add_argument("--opset", type=int, default=14,
-                       help="ONNX opset version (default: 14)")
+    parser.add_argument("--opset", type=int, default=18,
+                       help="ONNX opset version (default: 18 for PyTorch 2.11 exporter)")
     parser.add_argument("--cpu", action="store_true",
                        help="Use CPU model (no GPU)")
     parser.add_argument("--width", type=int, default=640,
