@@ -1,0 +1,24 @@
+project:
+  root: .
+  profile: portable
+
+toolchain:
+  msys2_root: runtime/msys64
+  mingw64_shell: runtime/msys64/mingw64.exe
+
+orbslam3:
+  root: orbslam3
+  build_dir: orbslam3/build-mingw
+  vocabulary: orbslam3/Vocabulary/ORBvoc.txt
+  rgbd_exe: orbslam3/Examples/RGB-D/rgbd_tum.exe
+
+datasets:
+  fr1_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg1_xyz
+    association: datasets/tum/rgbd_dataset_freiburg1_xyz/associations.txt
+  fr3_walking_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg3_walking_xyz
+    association: datasets/tum/rgbd_dataset_freiburg3_walking_xyz/associations.txt
+  fr3_sitting_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz
+    association: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz/associations.txt

@@ -1,5 +1,8 @@
-$ErrorActionPreference = "SilentlyContinue"
+param(
+    [string]$Profile = "dev"
+)
 
+$ErrorActionPreference = "SilentlyContinue"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
@@ -18,42 +21,25 @@ function Status($Name, $Ok, $Detail = "") {
 
 Write-Host "DS-SLAM progress check"
 Write-Host "Root: $Root"
+Write-Host "Profile: $Profile"
 Write-Host ""
 
-$hasGit = Test-Item ".git"
-$hasVenv = Test-Item ".venv"
-$hasOrb = Test-Item "orbslam3\CMakeLists.txt"
-$hasVocab = Test-Item "orbslam3\Vocabulary\ORBvoc.txt"
-$hasRgbdExe = Test-Item "orbslam3\Examples\RGB-D\rgbd_tum.exe"
-$hasFr1 = Test-Item "data\tum-rgbd_dataset_freiburg1_xyz"
-$hasFr3Walk = Test-Item "data\tum-rgbd_dataset_freiburg3_walking_xyz"
-$hasSeg = Test-Item "segmentation\python\models\uib.py"
-$hasOnnx = (Get-ChildItem -Path (Join-Path $Root "segmentation") -Filter "*.onnx" -Recurse | Select-Object -First 1) -ne $null
-$hasVisualizer = Test-Item "visualization\backend\main.py"
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "check_config.ps1") -Profile $Profile
 
+Write-Host ""
+Write-Host "Milestone artifacts"
 Status "M0 project skeleton" ((Test-Item "requirements.txt") -and (Test-Item "scripts\0_init_project.bat")) "requirements and scripts present"
-Status "M0 git repository" $hasGit "needed before milestone commits/tags"
-Status "M0 Python venv" $hasVenv ".venv"
-Status "M1 ORB-SLAM3 source" $hasOrb "orbslam3"
-Status "M1 ORB vocabulary" $hasVocab "ORBvoc.txt"
-Status "M1 RGB-D executable" $hasRgbdExe "build output"
-Status "M1 fr1_xyz dataset" $hasFr1 "static baseline"
-Status "M4 fr3_walking_xyz dataset" $hasFr3Walk "dynamic benchmark"
-Status "M2 segmentation modules" $hasSeg "UIB/DWR/LSCD"
+Status "M0 git repository" (Test-Item ".git") "needed before milestone commits/tags"
+Status "M2 segmentation modules" ((Test-Item "segmentation\python\models\uib.py") -and (Test-Item "segmentation\python\models\dwr.py") -and (Test-Item "segmentation\python\models\lscd.py")) "UIB/DWR/LSCD"
+$hasOnnx = (Get-ChildItem -Path (Join-Path $Root "segmentation") -Filter "*.onnx" -Recurse | Select-Object -First 1) -ne $null
 Status "M3 ONNX model" $hasOnnx "segmentation ONNX export"
-Status "M6 visualizer backend" $hasVisualizer "FastAPI entry point"
+Status "M6 visualizer backend" (Test-Item "visualization\backend\main.py") "FastAPI entry point"
 
 Write-Host ""
-if (-not $hasGit) {
-    Write-Host "Current stage: M0 is not fully complete because .git is missing."
-} elseif (-not $hasRgbdExe -or -not $hasFr1) {
-    Write-Host "Current stage: M1 in progress. Build ORB-SLAM3 and run fr1_xyz next."
-} elseif (-not $hasSeg) {
-    Write-Host "Current stage: M2 not started."
+if (-not (Test-Item "orbslam3\Examples\RGB-D\rgbd_tum.exe")) {
+    Write-Host "Current stage: M1 build/run is still the active checkpoint."
 } elseif (-not $hasOnnx) {
-    Write-Host "Current stage: M3 not complete."
-} elseif (-not $hasVisualizer) {
-    Write-Host "Current stage: M4/M5 before visualization."
+    Write-Host "Current stage: M2/M3 work remains after the ORB-SLAM3 baseline."
 } else {
-    Write-Host "Current stage: visualization/integration work is present. Verify runtime status manually."
+    Write-Host "Current stage: later integration artifacts are present; verify runtime manually."
 }

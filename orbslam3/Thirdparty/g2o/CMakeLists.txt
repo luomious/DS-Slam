@@ -17,7 +17,11 @@ endif()
 
 MESSAGE(STATUS "BUILD TYPE:" ${CMAKE_BUILD_TYPE})
 
-SET (G2O_LIB_TYPE STATIC)
+SET (G2O_LIB_TYPE SHARED)
+
+if(MINGW)
+  add_definitions(-DEIGEN_DONT_ALIGN_STATICALLY=1 -DEIGEN_MAX_ALIGN_BYTES=0)
+endif()
 
 # There seems to be an issue with MSVC8
 # see http://eigen.tuxfamily.org/bz/show_bug.cgi?id=83
@@ -175,4 +179,9 @@ g2o/stuff/os_specific.h
 g2o/stuff/string_tools.cpp
 g2o/stuff/property.cpp       
 g2o/stuff/property.h       
+)
+
+set_target_properties(g2o PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+  LINK_FLAGS "-Wl,--export-all-symbols"
 )

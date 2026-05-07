@@ -1,0 +1,19 @@
+project:
+  root: E:/VSCode/VSCode-Workspace/DS-Slam
+  profile: dev
+
+toolchain:
+  msys2_root: E:/msys64
+  mingw64_shell: E:/msys64/mingw64.exe
+  parallel_jobs: 4
+
+datasets:
+  fr1_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg1_xyz
+    association: datasets/tum/rgbd_dataset_freiburg1_xyz/associations.txt
+  fr3_walking_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg3_walking_xyz
+    association: datasets/tum/rgbd_dataset_freiburg3_walking_xyz/associations.txt
+  fr3_sitting_xyz:
+    root: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz
+    association: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz/associations.txt

@@ -86,7 +86,7 @@ ${Pangolin_INCLUDE_DIRS}
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
-add_library(${PROJECT_NAME} STATIC
+add_library(${PROJECT_NAME} SHARED
 src/System.cc
 src/Tracking.cc
 src/LocalMapping.cc
@@ -146,7 +146,10 @@ include/SerializationUtils.h
 include/Config.h
 include/Settings.h)
 
-# Target properties removed for static build
+set_target_properties(${PROJECT_NAME} PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+  LINK_FLAGS "-Wl,--export-all-symbols"
+)
 
 add_subdirectory(Thirdparty/g2o)
 
