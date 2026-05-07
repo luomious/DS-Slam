@@ -521,6 +521,9 @@ void System::Shutdown()
 
     cout << "Shutdown" << endl;
 
+    // DS-SLAM M3: release segmentator
+    if (mpSegmentator) { delete mpSegmentator; mpSegmentator = nullptr; }
+
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
     /*if(mpViewer)
@@ -1381,6 +1384,17 @@ void System::ChangeDataset()
 float System::GetImageScale()
 {
     return mpTracker->GetImageScale();
+}
+
+// DS-SLAM M3: init semantic segmentator
+void System::InitSegmentator(const string &onnxPath)
+{
+    cout << "DS-SLAM M3: Loading segmentation model: " << onnxPath << endl;
+    mpSegmentator = new SemanticSegmentator(onnxPath, false);
+    if (mpSegmentator->IsValid())
+        cout << "DS-SLAM M3: Segmentator loaded successfully." << endl;
+    else
+        cerr << "DS-SLAM M3: WARNING - Segmentator failed to load!" << endl;
 }
 
 #ifdef REGISTER_TIMES

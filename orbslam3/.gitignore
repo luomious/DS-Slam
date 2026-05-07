@@ -93,6 +93,7 @@ Table_TUMVI_rooms/
 *.tar.gz
 *.tgz
 *_build_log.txt
+*_build_*log.txt
 .idea/
 my_settings.txt
 

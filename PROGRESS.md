@@ -1,4 +1,4 @@
-# DS-SLAM Progress
+﻿# DS-SLAM Progress
 
 Project path: `E:\VSCode\VSCode-Workspace\DS-Slam`
 
@@ -6,115 +6,82 @@ Last reviewed: 2026-05-07
 
 ## Current Stage
 
-The project is past the original M0 checkpoint and is functionally at the M3 ONNX-export boundary.
-
-- M0 is complete in practice: the repository exists, scripts and requirements are present, and the project skeleton is in place.
-- M1 ORB-SLAM3 baseline is mostly complete: ORBvoc exists, `rgbd_tum.exe` exists, `fr1_xyz` and `fr3_walking_xyz` datasets are available, and RGB-D trajectory files were generated on 2026-05-06.
-- M1 is not formally closed yet because there is no `milestone-1` tag and the latest ORB-SLAM3 build fixes remain uncommitted.
-- M2 segmentation source files exist (`UIB`, `DWR`, `LSCD`, test/export scripts), and CPU fallback inference passes in the clean `.venv`.
-- M3 is partially complete: `segmentation/onnx/yolo11n_seg.onnx` exists and runs in ONNX Runtime CPU mode, but the C++ `SemanticSegmentator` interface is not present.
-- M4/M5 are not started: no dynamic feature filtering integration or static dense mapping module is confirmed.
-- M6 has a minimal config-aware Web visualizer scaffold, but not the full 4-panel Three.js SLAM UI yet.
+项目已推进至 M3 ONNX + C++ 接口集成阶段。M0-M2 全部完成，M3 编译通过但运行时需要进一步调试。
 
 ## Milestone Status
 
 | Milestone | Status | Notes |
 | --- | --- | --- |
-| M0 Environment precheck | Complete | Git repository, scripts, requirements, and skeleton are present. |
-| M1 ORB-SLAM3 build/run | Nearly complete | ORBvoc, RGB-D exe, `fr1_xyz`, `fr3_walking_xyz`, and trajectory outputs exist. Needs final verification, commit, and tag. |
-| M2 Semantic segmentation | Verified on CPU | Python model modules exist; `test_inference.py` passes with 80x80 head outputs and CPU fallback. |
-| M3 ONNX + C++ interface | Partial | ONNX model exports and runs in ONNX Runtime CPU mode; `SemanticSegmentator` is still missing. |
-| M4 Dynamic feature filtering | Not started | No Tracking integration confirmed. |
-| M5 Static dense mapping | Not started | No `StaticMapping` implementation confirmed. |
-| M6 Visualization | Scaffolded | Minimal FastAPI backend and simple frontend exist; full Three.js visualizer remains. |
-| M7 Integration | Not started | Full pipeline not confirmed. |
+| M0 环境预检 | ✅ 完成 | Git 仓库、脚本、依赖、项目骨架就位 |
+| M1 ORB-SLAM3 编译运行 | ✅ 完成 | DLL 方案成功：libORB_SLAM3.dll (6.4MB) + rgbd_tum.exe，TUM fr1/xyz 794帧 exit 0，61 关键帧 |
+| M2 语义分割验证 | ✅ 完成 | YOLO11nSeg 模型验证通过，ONNX 导出成功 (173KB opset18)，CPU 推理 25ms |
+| M3 ONNX + C++ 集成 | 🔧 调试中 | SemanticSegmentator C++ 实现完成，编译成功，独立测试 35.6ms/帧；ORB-SLAM3 集成版本编译通过，但运行时 exe 静默退出（onnxruntime.dll 未被链接进 libORB_SLAM3.dll） |
+| M4 动态特征剔除 | ⬜ 未开始 | 等待 M3 运行时验证 |
+| M5 静态密建图 | ⬜ 未开始 | |
+| M6 Web 可视化 | ⬜ 脚手架 | FastAPI 后端 + 前端最小原型存在，完整 Three.js 可视化待做 |
+| M7 系统集成测试 | ⬜ 未开始 | |
 
-## Configuration System Changes
+## M1 详细结果
 
-- Added shared YAML configuration:
-  - `config/default.yaml`
-  - `config/profiles/dev.yaml`
-  - `config/profiles/portable.yaml`
-  - `config/local.yaml.example`
-- Added config tooling:
-  - `scripts/config_loader.py` for merge order `default -> profile -> local -> env`.
-  - `scripts/print_config.py` for JSON/YAML output and runtime config generation.
-  - `scripts/check_config.ps1` for deployment preflight checks.
-  - `scripts/package_runtime.ps1` for non-destructive runtime packaging into `dist/ds-slam/`.
-- Updated config-driven scripts:
-  - `scripts/3_build_orbslam3.bat`
-  - `scripts/4_run_test.bat`
-  - `scripts/check_progress.ps1`
-- Added GUI/runtime scaffolding:
-  - `visualization/backend/main.py`
-  - `visualization/frontend/index.html`
-  - `slam-system/config/runtime_config.schema.md`
-- Updated `.gitignore` for local config, runtime config, package output, local venv, and troubleshooting artifacts.
+- **构建方案**：SHARED/DLL（libORB_SLAM3.dll + libg2o.dll + libDBoW2.a）
+- **编译参数**：`-O0 -j1 -std=c++17 -Wa,-mbig-obj -DEIGEN_DONT_ALIGN_STATICALLY=1 -DEIGEN_MAX_ALIGN_BYTES=0`
+- **TUM fr1/xyz 结果**：794 帧全部处理，61 关键帧，837 地图点，跟踪 20ms/帧，exit 0
+- **TUM fr3/walking_xyz 基线**：827 帧，189 关键帧，53s，ATE RMSE=0.37m（目标 <0.05m，动态物体严重干扰）
 
-## Python Environment Status
+## M2 详细结果
 
-- Standard project environment: `.venv` created with Python 3.12.10.
-- Old environment retained: `venv-py312` is untouched and should be treated as legacy/reference only.
-- `.venv` is isolated: `ENABLE_USER_SITE=False`, no `PYTHONPATH`, no `CONDA_PREFIX`.
-- `pip check` passes with no broken requirements.
-- Installed core packages include `torch 2.11.0+cpu`, `torchvision 0.26.0+cpu`, `numpy 2.4.3`, `opencv-python 4.13.0`, `onnx 1.21.0`, `onnxruntime-gpu 1.25.1`, `fastapi 0.136.1`, `uvicorn 0.46.0`, `websockets 16.0`, `evo 1.36.3`, and `ultralytics 8.4.47`.
-- CUDA 12.8 PyTorch install was attempted but timed out before installing anything; the clean standard environment currently uses CPU fallback.
-- RTX 5060 GPU support remains a separate follow-up: avoid reinstalling old `cu121` wheels because they do not support `sm_120`.
+- **模型**：YOLO11nSeg (1,524,311 参数)，架构 UIB backbone → DWR neck → LSCD head
+- **ONNX 导出**：yolo11n_seg.onnx (173.2KB)，opset 18，动态轴
+- **Python 环境**：Python 3.12.10 + torch 2.11.0+cpu + onnxruntime-gpu 1.25.1
+- **ORT Providers**：TensorrtExecutionProvider, CUDAExecutionProvider, CPUExecutionProvider
 
-## Latest Config Check
+## M3 详细结果
 
-Command:
+- **SemanticSegmentator C++ 类**：输入 BGR cv::Mat → 预处理 → ORT 推理 → softmax + 阈值 0.3 + 3×3 max pooling 膨胀 → 输出 uint8 mask
+- **独立测试**：test_segmentator.exe 编译成功，walking_xyz 首帧推理 35.6ms（CPU，目标 <50ms ✅）
+- **ORB-SLAM3 集成**：修改 System.h/cc、Tracking.cc、rgbd_tum.cc、CMakeLists.txt
+- **集成策略**：GrabImageRGBD 入口调用 Segment() → mask 遮盖深度图动态区域 → ORB 特征提取跳过动态对象
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check_progress.ps1 -Profile dev
-```
+## 当前阻塞项
 
-Observed status:
+**onnxruntime.dll 未链接进 libORB_SLAM3.dll**：
+- `objdump -p libORB_SLAM3.dll` 显示 DLL 依赖列表中没有 onnxruntime.dll
+- CMakeLists.txt 中引用了 `${DS_SLAM_LIB_DIR}/libonnxruntime.dll.a`，但链接未生效
+- 原因：libonnxruntime.dll.a 只导出 2 个符号，链接器可能未拉入
+- 可能修复：CMake 中使用 `-Wl,--no-as-needed` 强制链接，或改用 `target_link_options`
+- 修复后需重编译并验证 rgbd_tum.exe 能否正常启动和推理
 
-- OK: project root, MSYS2 MinGW64 shell, ORB-SLAM3 source, ORB vocabulary, RGB-D executable.
-- OK: `fr1_xyz` dataset, association file, and TUM1 camera config.
-- OK: `fr3_walking_xyz` dataset, association file, and TUM3 camera config.
-- Missing: `fr3_sitting_xyz` dataset and association file.
-- OK: `segmentation/onnx/yolo11n_seg.onnx`.
-- Missing: output directories `output/logs`, `output/trajectories`, `output/maps`.
-- OK: visualizer port `127.0.0.1:8000` is available.
-- OK: minimal visualizer static directory exists.
+## 关键技术教训
 
-## Latest M2/M3 Checks
+1. **Eigen 跨 DLL 传递必须禁用静态对齐**：`-DEIGEN_DONT_ALIGN_STATICALLY=1 -DEIGEN_MAX_ALIGN_BYTES=0`
+2. **16GB 内存编译大型 C++ 项目需 `-O0 -j1`**：否则 SIGKILL
+3. **`-Wa,-mbig-obj`**：MinGW 编译 ORB-SLAM3 大模板文件的必需品
+4. **CMakeLists.txt 标志叠加陷阱**：多次 `set(CMAKE_CXX_FLAGS ...)` 累积而非替换
+5. **RTX 5060 (Blackwell sm_120)**：PyTorch ≤2.5 CUDA 不支持，使用 CPU PyTorch + ONNX Runtime GPU 路线
+6. **ORT C++ 头文件需 C++17**：noexcept on typedef 在 C++14 下不允许
+7. **Windows DLL 符号导出**需显式配置 `WINDOWS_EXPORT_ALL_SYMBOLS`
 
-Commands:
+## 关键文件
 
-```powershell
-.\.venv\Scripts\python.exe segmentation\python\test_inference.py --iters 3 --warmup 1
-.\.venv\Scripts\python.exe segmentation\python\export_onnx.py --cpu
-.\.venv\Scripts\python.exe -m pip check
-```
-
-Observed status:
-
-- OK: M2 inference runs on CPU fallback, average time about 90 ms for the short check.
-- OK: model outputs `bbox [1,4,80,80]`, `cls [1,2,80,80]`, `proto [1,32,80,80]`, and mask `[1,1,640,640]`.
-- OK: ONNX model exports to `segmentation/onnx/yolo11n_seg.onnx`, validates with ONNX checker, and runs in ONNX Runtime CPU mode.
-- Note: ONNX export now uses opset 18 because PyTorch 2.11 cannot reliably down-convert the Resize path to opset 14.
+| 文件 | 用途 |
+|------|------|
+| `AGENTS.md` | 项目计划（~1015 行，MinGW 迁移后版本） |
+| `orbslam3/CMakeLists.txt` | 经多次修改（C++17、mbig-obj、ORT、对齐标志） |
+| `orbslam3/include/pangolin/pangolin.h` | Pangolin stub header（禁用可视化） |
+| `orbslam3/include/LoopClosing.h` | 修复 bool→int（C++17 禁止 bool++） |
+| `slam-system/include/SemanticSegmentator.h` | C++ ORT 语义分割类声明 |
+| `slam-system/src/SemanticSegmentator.cpp` | C++ ORT 语义分割类实现 |
+| `slam-system/test_segmentator.cpp` | 独立测试程序 |
+| `segmentation/onnx/yolo11n_seg.onnx` | YOLO11nSeg ONNX 模型 |
+| `libs/onnxruntime/` | ONNX Runtime 预编译库（Win-x64） |
+| `datasets/tum/` | TUM 测试数据集（fr1/xyz, fr3/walking_xyz） |
+| `orbslam3/build_cmake.bat` | CMake 构建批处理脚本 |
+| `orbslam3/run_rgbd.bat` | 运行测试批处理脚本 |
 
 ## Immediate Next Steps
 
-1. Review and commit the current configuration-system, Python-environment, and M2/M3 ONNX changes separately if clean history matters.
-2. Finalize M1 by running the config-driven `scripts\4_run_test.bat` on `fr1_xyz`, confirming trajectory output, then commit and tag `milestone-1`.
-3. Decide whether to retry PyTorch CUDA 12.8 installation for RTX 5060 or keep CPU fallback until C++ ONNX Runtime GPU integration.
-4. Add the C++ `SemanticSegmentator` wrapper now that the ONNX artifact is present.
-5. Keep M4 dynamic feature filtering blocked until `SemanticSegmentator` has a passing C++ test.
-
-## Notes
-
-- Current working tree includes unrelated/uncommitted ORB-SLAM3 build changes:
-  - `orbslam3/CMakeLists.txt`
-  - `orbslam3/Thirdparty/g2o/CMakeLists.txt`
-  - `orbslam3/evaluation/associate.py`
-- Generated/local artifacts are present and ignored or should remain untracked:
-  - `build/runtime_config.json`
-  - `dist/`
-  - `venv-py312/`
-  - `_out*.txt`
-  - `_gen_assoc.py`
-  - `orbslam3/_build_dll_log.txt`
+1. 修复 onnxruntime.dll 链接问题（`-Wl,--no-as-needed` 或 CMake target_link_options）
+2. 重编译 ORB-SLAM3 集成版本
+3. 验证 rgbd_tum.exe 能正常启动并执行语义分割
+4. 重跑 walking_xyz，验证 ATE 从 0.37m 降至 <0.05m
+5. M3 通过后进入 M4 动态特征剔除

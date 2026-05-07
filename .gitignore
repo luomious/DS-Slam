@@ -1,4 +1,4 @@
-.venv/
+﻿.venv/
 venv-py312/
 __pycache__/
 *.pyc
@@ -6,10 +6,13 @@ __pycache__/
 # Build output
 orbslam3/build/
 orbslam3/build-mingw/
+orbslam3/build_static/
 orbslam3/lib/
 orbslam3/Thirdparty/DBoW2/lib/
+orbslam3/Thirdparty/DBoW2/build_static/
 orbslam3/Thirdparty/g2o/bin/
 slam-system/build/
+build/
 
 # Large datasets and model artifacts
 data/
@@ -22,6 +25,11 @@ datasets/
 *.tar.gz
 *.tgz
 
+# ORT large binaries (keep headers, .dll.a, .def)
+libs/onnxruntime/lib/*.dll
+libs/onnxruntime/lib/*.pdb
+libs/onnxruntime/lib/*.lib
+
 # Generated output
 output/
 dist/
@@ -33,19 +41,18 @@ config/local.yaml
 # Local/editor files
 .vscode/
 .idea/
+.claude/
 *.log
 
-# Local runner artifacts (generated during troubleshooting)
+# Local runner artifacts
 _run_*.txt
 _run_*.py
-_out*.txt
+_out_*.txt
 _gen_assoc.py
 
-# Local helper scripts (experimental)
+# Local helper scripts
 orbslam3/_*.py
 orbslam3/_*.txt
 
-# Thirdparty local build artifacts
-orbslam3/Thirdparty/DBoW2/build_static/
-
-orbslam3/build_static/
+# Task artifacts
+task-*.md

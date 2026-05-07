@@ -1540,6 +1540,17 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     if((fabs(mDepthMapFactor-1.0f)>1e-5) || imDepth.type()!=CV_32F)
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
 
+    // DS-SLAM M3: semantic segmentation for dynamic object masking
+    if (mpSystem->GetSegmentator() && mpSystem->GetSegmentator()->IsValid())
+    {
+        cv::Mat segMask = mpSystem->GetSegmentator()->Segment(imRGB);
+        if (!segMask.empty() && segMask.size() == mImGray.size())
+        {
+            // Zero out grayscale pixels on dynamic regions so ORB ignores them
+            mImGray.setTo(cv::Scalar(0), segMask);
+        }
+    }
+
     if (mSensor == System::RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
     else if(mSensor == System::IMU_RGBD)
