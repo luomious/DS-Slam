@@ -146,9 +146,17 @@ class YOLO11nSeg(nn.Module):
         self.dwr3 = DWR(64, dilations=[1, 2, 4, 8])
         self.dwr4 = DWR(128, dilations=[1, 2, 4, 8])
 
+        # Fuse high-resolution context (n3) with deep semantic context (n4).
+        # The head stays at H/8 so mask prototypes match the M2 checkpoint.
+        self.n4_reduce = nn.Sequential(
+            nn.Conv2d(256, 128, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+
         # Head
         self.head = LSCDHead(
-            in_channels=256,  # dwr4 output
+            in_channels=256,  # concat(n3, upsample(reduced n4))
             num_classes=num_classes,
             proto_channels=proto_channels,
         )
@@ -163,9 +171,12 @@ class YOLO11nSeg(nn.Module):
         # Neck fusion
         n3 = self.dwr3(f3)       # [B, 128, 80, 80]  (2 x 64)
         n4 = self.dwr4(f4)       # [B, 256, 40, 40]  (2 x 128)
+        n4 = self.n4_reduce(n4)  # [B, 128, 40, 40]
+        n4 = F.interpolate(n4, size=n3.shape[-2:], mode='bilinear', align_corners=False)
+        fused = torch.cat([n3, n4], dim=1)  # [B, 256, 80, 80]
 
         # Head
-        return self.head(n4)
+        return self.head(fused)
 
 
 class SegmentationDecoder(nn.Module):

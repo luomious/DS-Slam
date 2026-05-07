@@ -1,4 +1,5 @@
 .venv/
+venv-py312/
 __pycache__/
 *.pyc
 
@@ -14,6 +15,7 @@ slam-system/build/
 data/
 datasets/
 *.onnx
+*.onnx.data
 *.pt
 *.pth
 *.bin
@@ -22,8 +24,11 @@ datasets/
 
 # Generated output
 output/
+dist/
+build/runtime_config.json
 segmentation/python/output/
 visualization/backend/__pycache__/
+config/local.yaml
 
 # Local/editor files
 .vscode/
@@ -33,9 +38,12 @@ visualization/backend/__pycache__/
 # Local runner artifacts (generated during troubleshooting)
 _run_*.txt
 _run_*.py
+_out*.txt
+_gen_assoc.py
 
 # Local helper scripts (experimental)
 orbslam3/_*.py
+orbslam3/_*.txt
 
 # Thirdparty local build artifacts
 orbslam3/Thirdparty/DBoW2/build_static/

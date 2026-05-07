@@ -32,9 +32,10 @@ if not exist ".git" (
 echo.
 echo [3/4] Creating Python virtual environment...
 if not exist ".venv" (
-    python -m venv .venv
+    py -3.12 -m venv .venv
     if errorlevel 1 (
         echo [ERROR] Failed to create .venv.
+        echo Make sure Python 3.12 is installed and visible through the py launcher.
         pause
         exit /b 1
     )
@@ -46,9 +47,7 @@ echo.
 echo [4/4] Optional Python dependency install.
 set /p INSTALL_PY="Install Python dependencies now? This can take a while. [y/N]: "
 if /i "%INSTALL_PY%"=="y" (
-    call ".venv\Scripts\Activate.bat"
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
+    call scripts\setup_python.bat
 ) else (
     echo Skipped dependency install. Run scripts\setup_python.bat later if needed.
 )

@@ -17,17 +17,50 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
 import torch
+
+try:
+    import cv2
+except ModuleNotFoundError:
+    cv2 = None
+
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    np = None
 
 # Add models directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 from models.lscd import YOLO11nSeg, SegmentationDecoder
 
 
+def select_device(force_cpu=False):
+    """Pick a usable device, falling back when CUDA is installed but incompatible."""
+    if force_cpu or not torch.cuda.is_available():
+        return torch.device("cpu"), None
+
+    device = torch.device("cuda")
+    try:
+        probe = torch.ones(1, device=device)
+        probe = probe + 1
+        torch.cuda.synchronize()
+        del probe
+        return device, None
+    except RuntimeError as exc:
+        warning = (
+            "CUDA is visible but unusable for this PyTorch build; "
+            f"falling back to CPU. Original error: {exc}"
+        )
+        return torch.device("cpu"), warning
+
+
 def load_or_create_image(image_path=None, size=(640, 640)):
     """Load image from path or create a random test image."""
+    if cv2 is None or np is None:
+        if image_path:
+            raise RuntimeError("Loading image files requires opencv-python and numpy.")
+        return torch.rand(3, size[1], size[0])
+
     if image_path and Path(image_path).exists():
         img = cv2.imread(image_path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -42,6 +75,9 @@ def load_or_create_image(image_path=None, size=(640, 640)):
 
 def preprocess(img, device):
     """Convert HWC uint8 numpy to BCHW float tensor."""
+    if isinstance(img, torch.Tensor):
+        return img.unsqueeze(0).to(device)
+
     tensor = torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0)  # [1, 3, H, W]
     tensor = tensor / 255.0
     return tensor.to(device)
@@ -56,9 +92,11 @@ def main():
     args = parser.parse_args()
 
     # Device
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
+    device, device_warning = select_device(args.cpu)
     print(f"[M2] Device: {device}")
     print(f"[M2] GPU: {torch.cuda.get_device_name(0) if device.type == 'cuda' else 'N/A'}")
+    if device_warning:
+        print(f"[M2] WARNING: {device_warning}")
 
     # Build model
     print("[M2] Building YOLO11nSeg...")
@@ -96,8 +134,8 @@ def main():
             t1 = time.perf_counter()
             times.append((t1 - t0) * 1000)  # ms
 
-    avg_time = np.mean(times)
-    std_time = np.std(times)
+    avg_time = sum(times) / len(times)
+    std_time = (sum((t - avg_time) ** 2 for t in times) / len(times)) ** 0.5
     print(f"[M2] Inference: {avg_time:.1f} +/- {std_time:.1f} ms")
 
     # Verify outputs
@@ -110,11 +148,14 @@ def main():
     print(f"[M2] Mask range: [{mask.min().item():.3f}, {mask.max().item():.3f}]")
 
     # Save sample mask for visual check
-    mask_np = (mask[0, 0].cpu().numpy() * 255).astype(np.uint8)
-    out_dir = Path(__file__).parent / "output"
-    out_dir.mkdir(exist_ok=True)
-    cv2.imwrite(str(out_dir / "test_mask.png"), mask_np)
-    print(f"[M2] Saved test_mask.png to {out_dir}")
+    if cv2 is not None and np is not None:
+        mask_np = (mask[0, 0].cpu().numpy() * 255).astype(np.uint8)
+        out_dir = Path(__file__).parent / "output"
+        out_dir.mkdir(exist_ok=True)
+        cv2.imwrite(str(out_dir / "test_mask.png"), mask_np)
+        print(f"[M2] Saved test_mask.png to {out_dir}")
+    else:
+        print("[M2] Skipped mask PNG save because opencv-python/numpy is not installed.")
 
     # Validation
     checks = []

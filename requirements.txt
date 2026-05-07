@@ -1,8 +1,9 @@
---index-url https://download.pytorch.org/whl/cu121
-torch>=2.0.0
-torchvision>=0.15.0
+# Install PyTorch separately in scripts/setup_python.bat so the project can
+# choose a CPU fallback or a CUDA wheel without forcing all packages through
+# the PyTorch package index.
 ultralytics>=8.0.0
 onnx>=1.15.0
+onnxscript>=0.1.0
 onnxruntime-gpu>=1.16.0
 opencv-python>=4.8.0
 numpy>=1.24.0
@@ -11,3 +12,4 @@ uvicorn>=0.24.0
 websockets>=12.0
 python-multipart>=0.0.6
 evo>=1.28.0
+PyYAML>=6.0.0
