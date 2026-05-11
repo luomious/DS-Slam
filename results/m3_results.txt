@@ -1,0 +1,13 @@
+DS-SLAM M3 Results  
+==================  
+  
+walking_xyz test:  
+  Baseline ATE RMSE: 0.3700 m  
+  M3 Seg ATE RMSE:  0.2197 m  
+  Improvement:       40.6%%  
+  
+Config:  
+  confidence=0.7, NMS IoU=0.45, mask_threshold=0.5  
+  dilation=11x11 ellipse (5px)  
+  dynamic classes: person,bicycle,car,motorcycle,bus,truck  
+  model: yolo11n_seg_v2.onnx (11.7MB, 80-class COCO) 
