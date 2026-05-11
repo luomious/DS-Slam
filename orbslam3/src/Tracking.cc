@@ -1556,10 +1556,8 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     else if(mSensor == System::IMU_RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
 
-
-
-
-
+    // DS-SLAM M4: Epipolar constraint filtering
+    // FilterEpipolar();  // DISABLED for M3-only ablation
 
     mCurrentFrame.mNameFile = filename;
     mCurrentFrame.mnDataset = mnNumDataset;
@@ -4133,5 +4131,66 @@ void Tracking::Release()
     mbStopRequested = false;
 }
 #endif
+
+
+// DS-SLAM M4: Epipolar constraint filtering using essential matrix RANSAC
+// Filters out geometric outliers that survived semantic masking
+void Tracking::FilterEpipolar()
+{
+    // Need at least 2 frames
+    if (mLastFrame.mnId == 0 || mLastFrame.N < 10 || mCurrentFrame.N < 10)
+        return;
+
+    // BFMatcher for ORB descriptors (NORM_HAMMING)
+    cv::BFMatcher matcher(cv::NORM_HAMMING);
+    std::vector<std::vector<cv::DMatch>> knnMatches;
+    matcher.knnMatch(mCurrentFrame.mDescriptors, mLastFrame.mDescriptors, knnMatches, 2);
+
+    // Lowe's ratio test: keep only good matches
+    std::vector<cv::DMatch> goodMatches;
+    std::vector<cv::Point2f> ptsCur, ptsLast;
+    std::vector<int> curIdx;  // index into mCurrentFrame.mvKeysUn
+    for (size_t i = 0; i < knnMatches.size(); i++) {
+        if (knnMatches[i].size() == 2 && knnMatches[i][0].distance < 0.75f * knnMatches[i][1].distance) {
+            goodMatches.push_back(knnMatches[i][0]);
+            ptsCur.push_back(mCurrentFrame.mvKeysUn[knnMatches[i][0].queryIdx].pt);
+            ptsLast.push_back(mLastFrame.mvKeysUn[knnMatches[i][0].trainIdx].pt);
+            curIdx.push_back(knnMatches[i][0].queryIdx);
+        }
+    }
+
+    if (goodMatches.size() < 8)
+        return;
+
+    // Find essential matrix with RANSAC
+    cv::Mat inlierMask;
+    cv::Mat E = cv::findEssentialMat(ptsCur, ptsLast, mCurrentFrame.fx, 
+                                      cv::Point2d(mCurrentFrame.cx, mCurrentFrame.cy),
+                                      cv::RANSAC, 0.999, 1.5, inlierMask);
+
+    if (E.empty())
+        return;
+
+    // Count inliers
+    int nInliers = cv::countNonZero(inlierMask);
+    int nDynamic = (int)goodMatches.size() - nInliers;
+
+    // Mark non-inlier matched features as outliers
+    for (size_t i = 0; i < goodMatches.size(); i++) {
+        if (!inlierMask.at<uchar>((int)i, 0)) {
+            int idx = curIdx[i];
+            if (idx >= 0 && idx < mCurrentFrame.N) {
+                mCurrentFrame.mvbOutlier[idx] = true;
+            }
+        }
+    }
+
+    static int frameCount = 0;
+    if (++frameCount % 50 == 0) {
+        std::cout << "[M4 Epipolar] Good matches: " << goodMatches.size()
+                  << ", Inliers: " << nInliers 
+                  << ", Dynamic filtered: " << nDynamic << std::endl;
+    }
+}
 
 } //namespace ORB_SLAM

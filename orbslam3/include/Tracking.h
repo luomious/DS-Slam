@@ -357,6 +357,9 @@ protected:
 
     void newParameterLoader(Settings* settings);
 
+    // DS-SLAM M4: Epipolar constraint filtering for dynamic object removal
+    void FilterEpipolar();
+
 #ifdef REGISTER_LOOP
     bool Stop();
 

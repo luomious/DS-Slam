@@ -7,9 +7,12 @@ __pycache__/
 orbslam3/build/
 orbslam3/build-mingw/
 orbslam3/build_static/
+orbslam3/build_clang/
 orbslam3/lib/
 orbslam3/Thirdparty/DBoW2/lib/
 orbslam3/Thirdparty/DBoW2/build_static/
+orbslam3/Thirdparty/DBoW2/build_clang/
+orbslam3/Thirdparty/**/build_clang/
 orbslam3/Thirdparty/g2o/bin/
 slam-system/build/
 build/
@@ -38,6 +41,10 @@ segmentation/python/output/
 visualization/backend/__pycache__/
 config/local.yaml
 
+# Results (keep small summaries only)
+results/*.txt
+!results/m3_results.txt
+
 # Local/editor files
 .vscode/
 .idea/
@@ -49,6 +56,10 @@ _run_*.txt
 _run_*.py
 _out_*.txt
 _gen_assoc.py
+
+# Local command/output scratch files
+run_*.txt
+test_output.txt
 
 # Local helper scripts
 orbslam3/_*.py
