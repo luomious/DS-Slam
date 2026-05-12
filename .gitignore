@@ -67,3 +67,6 @@ orbslam3/_*.txt
 
 # Task artifacts
 task-*.md
+# Trajectory outputs
+CameraTrajectory*.txt
+KeyFrameTrajectory*.txt
