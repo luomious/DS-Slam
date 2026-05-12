@@ -1557,7 +1557,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
 
     // DS-SLAM M4: Epipolar constraint filtering
-    // FilterEpipolar();  // DISABLED for M3-only ablation
+    FilterEpipolar();  // M4: epipolar constraint filtering enabled
 
     mCurrentFrame.mNameFile = filename;
     mCurrentFrame.mnDataset = mnNumDataset;
