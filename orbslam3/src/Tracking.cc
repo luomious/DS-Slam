@@ -1546,9 +1546,21 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
         cv::Mat segMask = mpSystem->GetSegmentator()->Segment(imRGB);
         if (!segMask.empty() && segMask.size() == mImGray.size())
         {
-            // Zero out grayscale pixels on dynamic regions so ORB ignores them
+            int maskPixels = cv::countNonZero(segMask);
+            std::cout << "[DS-SLAM M3] Mask pixels: " << maskPixels 
+                      << " / " << segMask.total() 
+                      << " (" << (100.0 * maskPixels / segMask.total()) << "%)" << std::endl;
             mImGray.setTo(cv::Scalar(0), segMask);
+            imDepth.setTo(cv::Scalar(0), segMask);
         }
+        else
+        {
+            std::cout << "[DS-SLAM M3] Mask empty or size mismatch!" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "[DS-SLAM M3] Segmentator not available or invalid!" << std::endl;
     }
 
     if (mSensor == System::RGBD)
@@ -4147,11 +4159,12 @@ void Tracking::FilterEpipolar()
     matcher.knnMatch(mCurrentFrame.mDescriptors, mLastFrame.mDescriptors, knnMatches, 2);
 
     // Lowe's ratio test: keep only good matches
+    // NOTE: ORB binary descriptors need relaxed ratio (0.85 vs 0.75 for SIFT)
     std::vector<cv::DMatch> goodMatches;
     std::vector<cv::Point2f> ptsCur, ptsLast;
     std::vector<int> curIdx;  // index into mCurrentFrame.mvKeysUn
     for (size_t i = 0; i < knnMatches.size(); i++) {
-        if (knnMatches[i].size() == 2 && knnMatches[i][0].distance < 0.75f * knnMatches[i][1].distance) {
+        if (knnMatches[i].size() == 2 && knnMatches[i][0].distance < 0.85f * knnMatches[i][1].distance) {
             goodMatches.push_back(knnMatches[i][0]);
             ptsCur.push_back(mCurrentFrame.mvKeysUn[knnMatches[i][0].queryIdx].pt);
             ptsLast.push_back(mLastFrame.mvKeysUn[knnMatches[i][0].trainIdx].pt);
@@ -4163,10 +4176,11 @@ void Tracking::FilterEpipolar()
         return;
 
     // Find essential matrix with RANSAC
+    // NOTE: ORB feature precision is 1-2 pixels, use relaxed threshold (3.0 vs 1.5)
     cv::Mat inlierMask;
     cv::Mat E = cv::findEssentialMat(ptsCur, ptsLast, mCurrentFrame.fx, 
                                       cv::Point2d(mCurrentFrame.cx, mCurrentFrame.cy),
-                                      cv::RANSAC, 0.999, 1.5, inlierMask);
+                                      cv::RANSAC, 0.999, 3.0, inlierMask);
 
     if (E.empty())
         return;
