@@ -225,6 +225,26 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //usleep(10*1000*1000);
 
+    // DS-SLAM M3: Initialize Semantic Segmentator
+    mpSegmentator = nullptr;  // Initialize to nullptr
+    cv::FileNode segNode = fsSettings["Segmentator"];
+    if(!segNode.empty())
+    {
+        if(!segNode["ONNXPath"].empty())
+        {
+            std::string onnxPath = (std::string)segNode["ONNXPath"];
+            bool segEnabled = true;
+            if(!segNode["Enabled"].empty())
+            {
+                segEnabled = (int)segNode["Enabled"] != 0;
+            }
+            if(segEnabled)
+            {
+                InitSegmentator(onnxPath);
+            }
+        }
+    }
+
     //Initialize the Viewer thread and launch
     if(bUseViewer)
     //if(false) // TODO
@@ -1389,6 +1409,10 @@ float System::GetImageScale()
 // DS-SLAM M3: init semantic segmentator
 void System::InitSegmentator(const string &onnxPath)
 {
+    if (mpSegmentator) {
+        delete mpSegmentator;
+        mpSegmentator = nullptr;
+    }
     cout << "DS-SLAM M3: Loading segmentation model: " << onnxPath << endl;
     mpSegmentator = new SemanticSegmentator(onnxPath, false);
     if (mpSegmentator->IsValid())

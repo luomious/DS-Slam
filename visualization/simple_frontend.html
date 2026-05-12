@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DS-SLAM 三维可视化</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            overflow: hidden;
+        }
+        #header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 50px;
+            background: rgba(20, 20, 30, 0.9);
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 100;
+        }
+        #header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #00d4ff;
+        }
+        #status {
+            font-size: 13px;
+            color: #888;
+        }
+        #status.connected { color: #00ff88; }
+        #status.error { color: #ff4444; }
+        #canvas-container {
+            position: fixed;
+            top: 50px; left: 0; right: 0; bottom: 0;
+        }
+        #info-panel {
+            position: fixed;
+            bottom: 20px; left: 20px;
+            background: rgba(20, 20, 30, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            font-size: 13px;
+            line-height: 1.6;
+            min-width: 200px;
+        }
+        #info-panel .label {
+            color: #888;
+        }
+        #info-panel .value {
+            color: #00d4ff;
+            font-weight: 600;
+        }
+        #controls {
+            position: fixed;
+            top: 70px; right: 20px;
+            background: rgba(20, 20, 30, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        button {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #2a2a4e;
+            border-color: #00d4ff;
+        }
+        button.active {
+            background: #00d4ff22;
+            border-color: #00d4ff;
+        }
+    </style>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="header">
+        <h1>DS-SLAM 三维轨迹可视化</h1>
+        <span id="status">连接中...</span>
+    </div>
+    
+    <div id="canvas-container"></div>
+    
+    <div id="info-panel">
+        <div><span class="label">相机位姿:</span> <span class="value" id="pose-count">-</span></div>
+        <div><span class="label">关键帧:</span> <span class="value" id="kf-count">-</span></div>
+        <div><span class="label">轨迹长度:</span> <span class="value" id="traj-length">-</span> m</div>
+        <div><span class="label">当前帧:</span> <span class="value" id="current-frame">-</span></div>
+    </div>
+    
+    <div id="controls">
+        <button id="btn-camera" class="active">相机轨迹</button>
+        <button id="btn-keyframes">关键帧</button>
+        <button id="btn-play">播放动画</button>
+        <button id="btn-reset">重置视角</button>
+    </div>
+
+    <script>
+        // 全局变量
+        let scene, camera, renderer, controls;
+        let cameraTrajectory = [];
+        let keyframeTrajectory = [];
+        let cameraLine, cameraPoints;
+        let kfPoints;
+        let animationId;
+        let currentFrame = 0;
+        let isPlaying = false;
+        let ws;
+
+        // 初始化 Three.js
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            // 场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0a0a);
+            
+            // 相机
+            camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.01, 1000);
+            camera.position.set(2, 2, 2);
+            
+            // 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+            
+            // 控制器
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // 网格
+            const gridHelper = new THREE.GridHelper(10, 50, 0x333333, 0x1a1a1a);
+            scene.add(gridHelper);
+            
+            // 坐标轴
+            const axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+            
+            // 灯光
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // 窗口大小调整
+            window.addEventListener('resize', onWindowResize);
+            
+            // 连接 WebSocket
+            connectWebSocket();
+            
+            // 动画循环
+            animate();
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // WebSocket 连接
+        function connectWebSocket() {
+            const statusEl = document.getElementById('status');
+            
+            ws = new WebSocket('ws://localhost:8000/ws');
+            
+            ws.onopen = () => {
+                statusEl.textContent = '已连接';
+                statusEl.className = 'connected';
+                console.log('WebSocket connected');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'init') {
+                    cameraTrajectory = data.camera_trajectory || [];
+                    keyframeTrajectory = data.keyframe_trajectory || [];
+                    updateVisualization();
+                }
+            };
+            
+            ws.onclose = () => {
+                statusEl.textContent = '已断开';
+                statusEl.className = 'error';
+                // 尝试重连
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                statusEl.textContent = '连接错误';
+                statusEl.className = 'error';
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        // 更新可视化
+        function updateVisualization() {
+            // 清除旧的几何体
+            if (cameraLine) scene.remove(cameraLine);
+            if (cameraPoints) scene.remove(cameraPoints);
+            if (kfPoints) scene.remove(kfPoints);
+            
+            // 相机轨迹线
+            if (cameraTrajectory.length > 0) {
+                const points = cameraTrajectory.map(p => 
+                    new THREE.Vector3(p.pos[0], p.pos[1], p.pos[2])
+                );
+                
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({ 
+                    color: 0x00d4ff, 
+                    linewidth: 2 
+                });
+                cameraLine = new THREE.Line(geometry, material);
+                scene.add(cameraLine);
+                
+                // 相机位置点
+                const pointsGeometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(points.length * 3);
+                points.forEach((p, i) => {
+                    positions[i*3] = p.x;
+                    positions[i*3+1] = p.y;
+                    positions[i*3+2] = p.z;
+                });
+                pointsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                
+                const pointsMaterial = new THREE.PointsMaterial({ 
+                    color: 0x00d4ff, 
+                    size: 0.02 
+                });
+                cameraPoints = new THREE.Points(pointsGeometry, pointsMaterial);
+                scene.add(cameraPoints);
+                
+                // 计算轨迹长度
+                let length = 0;
+                for (let i = 1; i < points.length; i++) {
+                    length += points[i].distanceTo(points[i-1]);
+                }
+                
+                // 更新信息面板
+                document.getElementById('pose-count').textContent = cameraTrajectory.length;
+                document.getElementById('traj-length').textContent = length.toFixed(2);
+                
+                // 自动调整视角
+                const box = new THREE.Box3().setFromPoints(points);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                camera.position.set(
+                    center.x + maxDim,
+                    center.y + maxDim * 0.5,
+                    center.z + maxDim
+                );
+                controls.target.copy(center);
+                controls.update();
+            }
+            
+            // 关键帧
+            if (keyframeTrajectory.length > 0) {
+                const kfGeometry = new THREE.BufferGeometry();
+                const kfPositions = new Float32Array(keyframeTrajectory.length * 3);
+                keyframeTrajectory.forEach((p, i) => {
+                    kfPositions[i*3] = p.pos[0];
+                    kfPositions[i*3+1] = p.pos[1];
+                    kfPositions[i*3+2] = p.pos[2];
+                });
+                kfGeometry.setAttribute('position', new THREE.BufferAttribute(kfPositions, 3));
+                
+                const kfMaterial = new THREE.PointsMaterial({ 
+                    color: 0xff6600, 
+                    size: 0.05 
+                });
+                kfPoints = new THREE.Points(kfGeometry, kfMaterial);
+                kfPoints.visible = document.getElementById('btn-keyframes').classList.contains('active');
+                scene.add(kfPoints);
+                
+                document.getElementById('kf-count').textContent = keyframeTrajectory.length;
+            }
+        }
+
+        // 按钮事件
+        document.getElementById('btn-camera').addEventListener('click', function() {
+            this.classList.toggle('active');
+            if (cameraLine) cameraLine.visible = this.classList.contains('active');
+            if (cameraPoints) cameraPoints.visible = this.classList.contains('active');
+        });
+
+        document.getElementById('btn-keyframes').addEventListener('click', function() {
+            this.classList.toggle('active');
+            if (kfPoints) kfPoints.visible = this.classList.contains('active');
+        });
+
+        document.getElementById('btn-play').addEventListener('click', function() {
+            isPlaying = !isPlaying;
+            this.textContent = isPlaying ? '暂停动画' : '播放动画';
+            if (isPlaying) playAnimation();
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', function() {
+            if (cameraTrajectory.length > 0) {
+                const points = cameraTrajectory.map(p => 
+                    new THREE.Vector3(p.pos[0], p.pos[1], p.pos[2])
+                );
+                const box = new THREE.Box3().setFromPoints(points);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                camera.position.set(center.x + maxDim, center.y + maxDim * 0.5, center.z + maxDim);
+                controls.target.copy(center);
+                controls.update();
+            }
+        });
+
+        // 播放动画
+        function playAnimation() {
+            if (!isPlaying || cameraTrajectory.length === 0) return;
+            
+            currentFrame = (currentFrame + 1) % cameraTrajectory.length;
+            document.getElementById('current-frame').textContent = `${currentFrame + 1}/${cameraTrajectory.length}`;
+            
+            // 高亮当前位置
+            if (cameraPoints) {
+                const colors = new Float32Array(cameraTrajectory.length * 3);
+                for (let i = 0; i < cameraTrajectory.length; i++) {
+                    if (i === currentFrame) {
+                        colors[i*3] = 1; colors[i*3+1] = 0; colors[i*3+2] = 0; // 红色
+                    } else {
+                        colors[i*3] = 0; colors[i*3+1] = 0.83; colors[i*3+2] = 1; // 青色
+                    }
+                }
+                cameraPoints.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                cameraPoints.material.vertexColors = true;
+                cameraPoints.material.needsUpdate = true;
+            }
+            
+            setTimeout(playAnimation, 50);
+        }
+
+        // 启动
+        init();
+    </script>
+</body>
+</html>

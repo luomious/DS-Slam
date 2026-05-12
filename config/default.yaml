@@ -37,7 +37,7 @@ datasets:
     association: data/tum-rgbd_dataset_freiburg3_sitting_xyz/associations/rgbd_dataset_freiburg3_sitting_xyz.txt
 
 segmentation:
-  model_path: segmentation/onnx/yolo11n_seg.onnx
+  model_path: segmentation/onnx/yolo11n_seg_v2.onnx
   input_size: [640, 480]
   device: cuda
 
