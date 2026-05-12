@@ -54,7 +54,7 @@ def eigen_decomp(M):
         V = mat_mul(V, G)
     return [A[0][0], A[1][1], A[2][2]], V
 
-def umeyama(src, dst):
+def umeyama(src, dst, force_scale=None):
     n = len(src)
     cx = [sum(src[i][d] for i in range(n))/n for d in range(3)]
     cy = [sum(dst[i][d] for i in range(n))/n for d in range(3)]
@@ -81,13 +81,21 @@ def umeyama(src, dst):
     traceSD = sum(sv[i]*D[i][i] for i in range(3))
     s = traceSD / varX if varX > 1e-12 else 1.0
 
+    if force_scale is not None:
+        s = force_scale
+
     Rcx = mat_vec(R, cx)
     t = [cy[d] - s*Rcx[d] for d in range(3)]
     return R, s, t
 
 def main():
-    gt_file = sys.argv[1]
-    est_file = sys.argv[2]
+    se3_mode = "--se3" in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(args) < 2:
+        print("Usage: eval_ate.py <gt_file> <est_file> [--se3]")
+        sys.exit(1)
+    gt_file = args[0]
+    est_file = args[1]
 
     gt = read_traj(gt_file)
     est = read_traj(est_file)
@@ -112,7 +120,10 @@ def main():
         sys.exit(1)
 
     print("Computing Umeyama alignment...")
-    R, s, t = umeyama(matched_src, matched_dst)
+    force = 1.0 if se3_mode else None
+    R, s, t = umeyama(matched_src, matched_dst, force_scale=force)
+    if se3_mode:
+        print("  (SE3 mode: scale forced to 1.0)")
     print(f"Scale factor: {s:.6f}")
     print(f"Translation: {t[0]:.4f}, {t[1]:.4f}, {t[2]:.4f}")
 
@@ -138,19 +149,8 @@ def main():
     print(f"  Min:    {srt[0]:.6f} m")
     print(f"  Max:    {srt[-1]:.6f} m")
 
-    baseline = 0.37
-    m3 = 0.2197
-    print()
-    print("=== Comparison ===")
-    print(f"  Baseline (no filter):  {baseline} m")
-    print(f"  M3 (semantic only):    {m3} m")
-    print(f"  M4 (semantic+epipolar): {rmse:.4f} m")
-    if rmse < m3:
-        pct = (m3 - rmse) / m3 * 100
-        print(f"  M4 improvement over M3: {pct:.1f}%")
-    else:
-        pct = (rmse - m3) / m3 * 100
-        print(f"  M4 vs M3: {pct:.1f}% change (worse)")
+    mode_label = "SE3" if se3_mode else "Sim3"
+    print(f"  Alignment: {mode_label}")
 
 if __name__ == "__main__":
     main()

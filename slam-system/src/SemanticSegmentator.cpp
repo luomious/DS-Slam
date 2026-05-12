@@ -7,7 +7,7 @@
 SemanticSegmentator::SemanticSegmentator(const std::string& onnxPath,
                                          bool useGPU,
                                          cv::Size inputSize)
-    : m_env(ORT_LOGGING_LEVEL_WARNING, "DS-SLAM-Seg")
+    : m_env(ORT_LOGGING_LEVEL_WARNING, "DS-SLAM-Seg")  // NOTE: Ort::Env ctor may crash if ORT DLL is not fully loaded at this point
     , m_inputSize(inputSize)
 {
     try {
