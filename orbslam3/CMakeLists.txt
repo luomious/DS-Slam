@@ -6,7 +6,6 @@ if(WIN32)
     add_definitions(-D_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS)
     # Disable Eigen alignment for MinGW compatibility
     add_definitions(-DEIGEN_DONT_ALIGN_STATICALLY=1 -DEIGEN_MAX_ALIGN_BYTES=0)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wa,-mbig-obj")
 endif()
 
 IF(NOT CMAKE_BUILD_TYPE)
@@ -15,17 +14,18 @@ ENDIF()
 
 MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
+# Override cached flags to prevent accumulation from previous cmake runs
+set(CMAKE_CXX_FLAGS "-Wall -Wa,-mbig-obj" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS "-Wall" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "" FORCE)
 
 # Check C++17 or C++14 support
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
 CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
 if(COMPILER_SUPPORTS_CXX17)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17" CACHE STRING "" FORCE)
    add_definitions(-DCOMPILEDWITHC17)
    message(STATUS "Using flag -std=c++17 (required for ONNX Runtime).")
 elseif(COMPILER_SUPPORTS_CXX14)
@@ -171,17 +171,36 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 add_subdirectory(Thirdparty/g2o)
 
+# Resolve library paths to absolute
+# DBoW2 is STATIC - link directly to .a file to avoid picking up stale .dll.a
+set(DBOW2_LIB "${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.a")
+find_library(SEGMENTATOR_LIB SemanticSegmentator PATHS "${DS_SLAM_LIB_DIR}" NO_DEFAULT_PATH)
+find_library(ORT_LIB libonnxruntime.dll.a PATHS "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/lib" NO_DEFAULT_PATH)
+
+if(NOT DBOW2_LIB)
+    message(WARNING "DBoW2 library not found, using fallback path")
+    set(DBOW2_LIB "${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.a")
+endif()
+if(NOT SEGMENTATOR_LIB)
+    message(WARNING "SemanticSegmentator library not found, using fallback path")
+    set(SEGMENTATOR_LIB "${DS_SLAM_LIB_DIR}/libSemanticSegmentator.a")
+endif()
+if(NOT ORT_LIB)
+    message(WARNING "onnxruntime.dll.a not found, using fallback path")
+    set(ORT_LIB "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/lib/libonnxruntime.dll.a")
+endif()
+
 target_link_libraries(${PROJECT_NAME}
 ${OpenCV_LIBS}
 ${EIGEN3_LIBS}
 ${Pangolin_LIBRARIES}
-${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.a
+${DBOW2_LIB}
 g2o
 -lboost_serialization-mt
 -lcrypto
 -lopengl32
-${DS_SLAM_LIB_DIR}/libSemanticSegmentator.a
-${DS_SLAM_LIB_DIR}/libonnxruntime.dll.a
+${SEGMENTATOR_LIB}
+${ORT_LIB}
 )
 
 # If RealSense SDK is found the library is added and its examples compiled
