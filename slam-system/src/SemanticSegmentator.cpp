@@ -112,7 +112,7 @@ public:
             m_outputNames.data(), m_outputNames.size());
 
         cv::Mat binaryMask;
-        const float confThreshold = 0.3f;
+        const float confThreshold = 0.15f;
 
         if (outputs.size() == 2) {
             // YOLO11-seg format
@@ -209,7 +209,7 @@ public:
         }
 
         // Morphological dilation
-        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(11, 11));
         cv::dilate(binaryMask, binaryMask, kernel);
 
         auto t1 = std::chrono::high_resolution_clock::now();
