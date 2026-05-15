@@ -34,7 +34,9 @@
 
 namespace ORB_SLAM3
 {
+#if HAS_PANGOLIN
 class Viewer;
+#endif
 class Map;
 class MapPoint;
 class KeyFrame;
@@ -81,7 +83,9 @@ public:
 
     unsigned long int GetLastInitKFid();
 
+#if HAS_PANGOLIN
     void SetViewer(Viewer* pViewer);
+#endif
 
     // Method for change components in the current map
     void AddKeyFrame(KeyFrame* pKF);
@@ -152,8 +156,10 @@ protected:
 
     unsigned long int mnLastInitKFidMap;
 
+#if HAS_PANGOLIN
     Viewer* mpViewer;
     bool mHasViewer;
+#endif
 
     // Class references for the map reconstruction from the save file
     KeyFrameDatabase* mpKeyFrameDB;

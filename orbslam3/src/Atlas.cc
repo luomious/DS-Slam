@@ -17,7 +17,9 @@
 */
 
 #include "Atlas.h"
+#if HAS_PANGOLIN
 #include "Viewer.h"
+#endif
 
 #include "GeometricCamera.h"
 #include "Pinhole.h"
@@ -30,7 +32,10 @@ Atlas::Atlas(){
     mpCurrentMap = static_cast<Map*>(NULL);
 }
 
-Atlas::Atlas(int initKFid): mnLastInitKFidMap(initKFid), mHasViewer(false)
+Atlas::Atlas(int initKFid): mnLastInitKFidMap(initKFid)
+#if HAS_PANGOLIN
+    , mHasViewer(false)
+#endif
 {
     mpCurrentMap = static_cast<Map*>(NULL);
     CreateNewMap();
@@ -94,11 +99,13 @@ unsigned long int Atlas::GetLastInitKFid()
     return mnLastInitKFidMap;
 }
 
+#if HAS_PANGOLIN
 void Atlas::SetViewer(Viewer* pViewer)
 {
     mpViewer = pViewer;
     mHasViewer = true;
 }
+#endif
 
 void Atlas::AddKeyFrame(KeyFrame* pKF)
 {

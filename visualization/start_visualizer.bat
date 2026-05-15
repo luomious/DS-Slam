@@ -6,7 +6,7 @@ echo ==========================================
 echo.
 
 set VENV=E:\VSCode\VSCode-Workspace\DS-Slam\.venv\Scripts
-set WORKDIR=E:\VSCode\VSCode-Workspace\DS-Slam\visualization
+set WORKDIR=E:\VSCode\VSCode-Workspace\DS-Slam
 
 if not exist "%VENV%\uvicorn.exe" (
     echo 错误: 未找到 uvicorn，请先安装依赖
@@ -18,9 +18,10 @@ if not exist "%VENV%\uvicorn.exe" (
 cd /d "%WORKDIR%"
 
 echo 启动后端服务器...
-echo 访问地址: http://localhost:8080
+echo 访问地址: http://localhost:8000
+echo WebSocket: ws://localhost:8000/ws/slam
 echo.
 echo 按 Ctrl+C 停止服务器
 echo ==========================================
 
-"%VENV%\uvicorn.exe" simple_backend:app --host 0.0.0.0 --port 8080
+"%VENV%\uvicorn.exe" visualization.backend.main:app --host 0.0.0.0 --port 8000
