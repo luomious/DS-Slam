@@ -1,8 +1,8 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-* Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. G贸mez Rodr铆guez, Jos茅 M.M. Montiel and Juan D. Tard贸s, University of Zaragoza.
+* Copyright (C) 2014-2016 Ra煤l Mur-Artal, Jos茅 M.M. Montiel and Juan D. Tard贸s, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
 * License as published by the Free Software Foundation, either version 3 of the License, or
@@ -30,17 +30,25 @@
 
 #include "Tracking.h"
 #include "FrameDrawer.h"
+#if HAS_PANGOLIN
 #include "MapDrawer.h"
+#endif
 #include "Atlas.h"
 #include "LocalMapping.h"
 #include "LoopClosing.h"
 #include "KeyFrameDatabase.h"
 #include "ORBVocabulary.h"
+#if HAS_PANGOLIN
 #include "Viewer.h"
+#endif
 #include "ImuTypes.h"
 #include "Settings.h"
 
+#ifndef DS_SLAM_DISABLED
 #include "SemanticSegmentator.h"
+#include "SlamVisualizer.h"
+#include "StaticMapper.h"
+#endif
 
 namespace ORB_SLAM3
 {
@@ -72,14 +80,23 @@ public:
     }
 };
 
+#if HAS_PANGOLIN
 class Viewer;
-class FrameDrawer;
 class MapDrawer;
+#endif
+class FrameDrawer;
 class Atlas;
 class Tracking;
 class LocalMapping;
 class LoopClosing;
 class Settings;
+class SlamVisualizer;
+
+#ifndef DS_SLAM_DISABLED
+class SemanticSegmentator;
+class StaticMapper;
+namespace SLAM { class SlamVisualizer; }
+#endif
 
 class System
 {
@@ -169,6 +186,12 @@ public:
     void SaveTrajectoryKITTI(const string &filename);
 
     // TODO: Save/Load functions
+    // DS-SLAM M5: static dense mapping
+#ifndef DS_SLAM_DISABLED
+    StaticMapper* GetStaticMapper() { return &mStaticMapper; }
+    void SaveStaticMap(const string& plyPath, const string& gridPath);
+#endif
+
     // SaveMap(const string &filename);
     // LoadMap(const string &filename);
 
@@ -188,8 +211,14 @@ public:
     float GetImageScale();
 
     // DS-SLAM M3: semantic segmentation
+#ifndef DS_SLAM_DISABLED
     void InitSegmentator(const string &onnxPath);
     SemanticSegmentator* GetSegmentator() { return mpSegmentator; }
+
+    // DS-SLAM M6: visualizer
+    void InitVisualizer(const string& backendUrl = "http://127.0.0.1:8000/api/frame");
+    SLAM::SlamVisualizer* GetVisualizer() { return mpVisualizer; }
+#endif
 
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
@@ -229,17 +258,21 @@ private:
     // a pose graph optimization and full bundle adjustment (in a new thread) afterwards.
     LoopClosing* mpLoopCloser;
 
+#if HAS_PANGOLIN
     // The viewer draws the map and the current camera pose. It uses Pangolin.
     Viewer* mpViewer;
+    MapDrawer* mpMapDrawer;
+#endif
 
     FrameDrawer* mpFrameDrawer;
-    MapDrawer* mpMapDrawer;
 
     // System threads: Local Mapping, Loop Closing, Viewer.
     // The Tracking thread "lives" in the main execution thread that creates the System object.
     std::thread* mptLocalMapping;
     std::thread* mptLoopClosing;
+#if HAS_PANGOLIN
     std::thread* mptViewer;
+#endif
 
     // Reset flag
     std::mutex mMutexReset;
@@ -269,7 +302,15 @@ private:
     Settings* settings_;
 
     // DS-SLAM M3: semantic segmentator for dynamic object masking
+#ifndef DS_SLAM_DISABLED
     SemanticSegmentator* mpSegmentator = nullptr;
+
+    // DS-SLAM M6: visualizer
+    SLAM::SlamVisualizer* mpVisualizer = nullptr;
+
+    // DS-SLAM M5: static dense mapping
+    StaticMapper mStaticMapper;
+#endif
 };
 
 }// namespace ORB_SLAM

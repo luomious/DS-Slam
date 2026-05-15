@@ -1,80 +1,141 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DS-SLAM Visualizer</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #111827;
-      color: #f9fafb;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DS-SLAM Visualizer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
     }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid #374151;
-    }
-    main {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 1px;
-      height: calc(100vh - 55px);
-      background: #374151;
-    }
-    section {
-      min-width: 0;
-      background: #0f172a;
-      padding: 12px;
-    }
-    h1, h2 {
-      margin: 0;
-      font-size: 16px;
-      font-weight: 600;
-    }
-    h2 {
-      color: #cbd5e1;
-    }
-    .status {
-      color: #93c5fd;
-      font-size: 14px;
-    }
-    @media (max-width: 760px) {
-      main {
-        grid-template-columns: 1fr;
-        height: auto;
-        min-height: calc(100vh - 55px);
-      }
-      section {
-        min-height: 220px;
-      }
-    }
-  </style>
+    </script>
 </head>
 <body>
-  <header>
-    <h1>DS-SLAM Visualizer</h1>
-    <span id="status" class="status">connecting</span>
-  </header>
-  <main>
-    <section><h2>RGB + Features</h2></section>
-    <section><h2>Semantic Mask</h2></section>
-    <section><h2>3D Map + Trajectory</h2></section>
-    <section><h2>2D Grid Map</h2></section>
-  </main>
-  <script>
-    fetch('/api/status')
-      .then((response) => response.json())
-      .then((data) => {
-        document.getElementById('status').textContent =
-          `${data.profile} | ${data.ws_path} | ${data.clients} clients`;
-      })
-      .catch(() => {
-        document.getElementById('status').textContent = 'offline';
-      });
-  </script>
+    <header class="app-header">
+        <div class="header-left">
+            <span class="logo">DS-SLAM</span>
+            <span class="tagline">动态场景语义SLAM系统</span>
+        </div>
+        <div class="header-center">
+            <div class="ws-indicator" id="ws-indicator">
+                <span class="ws-dot disconnected" id="ws-dot"></span>
+                <span id="ws-text">Disconnected</span>
+            </div>
+            <div class="status-badge" id="slam-status">
+                <span class="status-dot"></span>
+                <span>INIT</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="fps-value">0</span>
+                <span class="stat-label">FPS</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="frame-num">0</span>
+                <span class="stat-label">Frames</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="kf-num">0</span>
+                <span class="stat-label">KeyFrames</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" id="map-pts">0</span>
+                <span class="stat-label">MapPts</span>
+            </div>
+            <div class="stat-item highlight">
+                <span class="stat-value" id="ate-value">--</span>
+                <span class="stat-label">ATE(m)</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <span class="version-badge">M0-M6</span>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <div class="panel-grid">
+            <div class="panel rgb-panel">
+                <div class="panel-header">
+                    <h3>📷 RGB输入 + ORB特征</h3>
+                    <span class="panel-badge input">INPUT</span>
+                </div>
+                <div class="panel-content">
+                    <div class="image-container">
+                        <canvas id="rgb-canvas"></canvas>
+                        <div class="placeholder">
+                            <span class="placeholder-icon">🎥</span>
+                            <span class="placeholder-text">等待RGB视频流...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <span id="rgb-info">-- × --</span>
+                    <span id="feature-count">0 features</span>
+                </div>
+            </div>
+
+            <div class="panel yolo-panel">
+                <div class="panel-header">
+                    <h3>🧠 YOLO语义分割</h3>
+                    <span class="panel-badge yolo">M3</span>
+                </div>
+                <div class="panel-content">
+                    <div class="image-container">
+                        <canvas id="yolo-canvas"></canvas>
+                        <div class="placeholder">
+                            <span class="placeholder-icon">🤖</span>
+                            <span class="placeholder-text">语义分割处理中...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <span id="yolo-class">Class: person</span>
+                    <span id="yolo-coverage">Coverage: 0%</span>
+                </div>
+            </div>
+
+            <div class="panel scene-panel">
+                <div class="panel-header">
+                    <h3>🏔️ 3D点云地图 + 轨迹</h3>
+                    <span class="panel-badge map">M5</span>
+                </div>
+                <div id="scene-content" class="panel-content scene-content">
+                    <div class="placeholder">
+                        <span class="placeholder-icon">⏳</span>
+                        <span class="placeholder-text">加载3D场景...</span>
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <span id="pointcloud-info">0 points</span>
+                    <span>拖动:旋转 | 滚轮:缩放</span>
+                </div>
+            </div>
+
+            <div class="panel grid-panel">
+                <div class="panel-header">
+                    <h3>🗺️ 2D栅格地图</h3>
+                    <span class="panel-badge map">M5</span>
+                </div>
+                <div class="panel-content">
+                    <div class="image-container">
+                        <canvas id="grid-canvas"></canvas>
+                        <div class="placeholder">
+                            <span class="placeholder-icon">📊</span>
+                            <span class="placeholder-text">栅格地图加载中...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <span>分辨率: 0.05m/格</span>
+                    <span id="grid-size">--</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script type="module" src="/static/js/app.js?v=2026051301"></script>
 </body>
 </html>

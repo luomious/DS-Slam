@@ -2158,7 +2158,6 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
 
     int nCorrespondences = 0;
     int nBadMPs = 0;
-    int nInKF2 = 0;
     int nOutKF2 = 0;
     int nMatchWithoutMP = 0;
 
@@ -2268,7 +2267,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
             obs2 << kpUn2.pt.x, kpUn2.pt.y;
             inKF2 = true;
 
-            nInKF2++;
+            // nInKF2 removed (was declared but never used)
         }
         else
         {

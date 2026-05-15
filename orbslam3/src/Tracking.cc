@@ -41,11 +41,21 @@ namespace ORB_SLAM3
 {
 
 
-Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
+Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
+#if HAS_PANGOLIN
+                   MapDrawer *pMapDrawer,
+#endif
+                   Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
     mState(NO_IMAGES_YET), mSensor(sensor), mTrackedFr(0), mbStep(false),
     mbOnlyTracking(false), mbMapUpdated(false), mbVO(false), mpORBVocabulary(pVoc), mpKeyFrameDB(pKFDB),
+#if HAS_PANGOLIN
     mbReadyToInitializate(false), mpSystem(pSys), mpViewer(NULL), bStepByStep(false),
-    mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
+    mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer),
+#else
+    mbReadyToInitializate(false), mpSystem(pSys), bStepByStep(false),
+    mpFrameDrawer(pFrameDrawer),
+#endif
+    mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))
 {
     // Load camera parameters from settings file
@@ -1434,10 +1444,12 @@ void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
     mpLoopClosing=pLoopClosing;
 }
 
+#if HAS_PANGOLIN
 void Tracking::SetViewer(Viewer *pViewer)
 {
     mpViewer=pViewer;
 }
+#endif
 
 void Tracking::SetStepByStep(bool bSet)
 {
@@ -1540,10 +1552,14 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     if((fabs(mDepthMapFactor-1.0f)>1e-5) || imDepth.type()!=CV_32F)
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
 
+    cv::Mat segMask;
+    cv::Mat depthForMapping;
+
     // DS-SLAM M3: semantic segmentation for dynamic object masking
+#ifndef DS_SLAM_DISABLED
     if (mpSystem->GetSegmentator() && mpSystem->GetSegmentator()->IsValid())
     {
-        cv::Mat segMask = mpSystem->GetSegmentator()->Segment(imRGB);
+        segMask = mpSystem->GetSegmentator()->Segment(imRGB);
         if (!segMask.empty() && segMask.size() == mImGray.size())
         {
             int maskPixels = cv::countNonZero(segMask);
@@ -1551,6 +1567,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
                       << " / " << segMask.total() 
                       << " (" << (100.0 * maskPixels / segMask.total()) << "%)" << std::endl;
             mImGray.setTo(cv::Scalar(0), segMask);
+            imDepth.copyTo(depthForMapping);
             imDepth.setTo(cv::Scalar(0), segMask);
         }
         else
@@ -1562,6 +1579,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     {
         std::cout << "[DS-SLAM M3] Segmentator not available or invalid!" << std::endl;
     }
+#endif
 
     if (mSensor == System::RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
@@ -1569,7 +1587,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
 
     // DS-SLAM M4: Epipolar constraint filtering
-    FilterEpipolar();  // M4: epipolar constraint filtering enabled
+    FilterEpipolar();
 
     mCurrentFrame.mNameFile = filename;
     mCurrentFrame.mnDataset = mnNumDataset;
@@ -1579,6 +1597,30 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 #endif
 
     Track();
+
+    // DS-SLAM M5: feed to static mapper
+#ifndef DS_SLAM_DISABLED
+    if (mState == OK && !depthForMapping.empty())
+    {
+        cv::Mat TcwMat = Converter::toCvMat(mCurrentFrame.GetPose().matrix());
+        mpSystem->GetStaticMapper()->AddKeyframe(
+            depthForMapping, imRGB, segMask,
+            TcwMat,
+            mK.at<float>(0,0), mK.at<float>(1,1),
+            mK.at<float>(0,2), mK.at<float>(1,2));
+    }
+
+    // DS-SLAM M6: push to visualizer
+    if (mpSystem->GetVisualizer())
+    {
+        cv::Mat TcwMat = Converter::toCvMat(mCurrentFrame.GetPose().matrix());
+        int kfCount = mpAtlas->GetAllKeyFrames().size();
+        int mapPtCount = mpAtlas->GetAllMapPoints().size();
+        mpSystem->GetVisualizer()->SendFrame(
+            imRGB, segMask, TcwMat, timestamp,
+            kfCount, mapPtCount);
+    }
+#endif
 
     return mCurrentFrame.GetPose();
 }
@@ -2221,7 +2263,9 @@ void Tracking::Track()
         // Update drawer
         mpFrameDrawer->Update(this);
         if(mCurrentFrame.isSet())
+#if HAS_PANGOLIN
             mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
+#endif
 
         if(bOK || mState==RECENTLY_LOST)
         {
@@ -2237,7 +2281,9 @@ void Tracking::Track()
             }
 
             if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
+#if HAS_PANGOLIN
                 mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
+#endif
 
             // Clean VO matches
             for(int i=0; i<mCurrentFrame.N; i++)
@@ -2459,7 +2505,9 @@ void Tracking::StereoInitialization()
 
         mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.push_back(pKFini);
 
+#if HAS_PANGOLIN
         mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
+#endif
 
         mState=OK;
     }
@@ -2670,7 +2718,9 @@ void Tracking::CreateInitialMapMonocular()
 
     mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
+#if HAS_PANGOLIN
     mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose());
+#endif
 
     mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.push_back(pKFini);
 
@@ -3801,12 +3851,14 @@ void Tracking::Reset(bool bLocMap)
 {
     Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);
 
+#if HAS_PANGOLIN
     if(mpViewer)
     {
         mpViewer->RequestStop();
         while(!mpViewer->isStopped())
             usleep(3000);
     }
+#endif
 
     // Reset Local Mapping
     if (!bLocMap)
@@ -3852,8 +3904,10 @@ void Tracking::Reset(bool bLocMap)
     mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
     mvIniMatches.clear();
 
+#if HAS_PANGOLIN
     if(mpViewer)
         mpViewer->Release();
+#endif
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
@@ -3861,12 +3915,14 @@ void Tracking::Reset(bool bLocMap)
 void Tracking::ResetActiveMap(bool bLocMap)
 {
     Verbose::PrintMess("Active map Reseting", Verbose::VERBOSITY_NORMAL);
+#if HAS_PANGOLIN
     if(mpViewer)
     {
         mpViewer->RequestStop();
         while(!mpViewer->isStopped())
             usleep(3000);
     }
+#endif
 
     Map* pMap = mpAtlas->GetCurrentMap();
 
@@ -3943,8 +3999,10 @@ void Tracking::ResetActiveMap(bool bLocMap)
 
     mbVelocity = false;
 
+#if HAS_PANGOLIN
     if(mpViewer)
         mpViewer->Release();
+#endif
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }

@@ -15,26 +15,23 @@ ENDIF()
 MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Override cached flags to prevent accumulation from previous cmake runs
-set(CMAKE_CXX_FLAGS "-Wall -Wa,-mbig-obj" CACHE STRING "" FORCE)
+# Removed -mcmodel=large to fix _GLOBAL_OFFSET_TABLE_ linking error on MinGW
+if(WIN32)
+    set(CMAKE_CXX_FLAGS "-Wall -Wa,-mbig-obj -frtti -fkeep-inline-functions" CACHE STRING "" FORCE)
+else()
+    set(CMAKE_CXX_FLAGS "-Wall -frtti -fkeep-inline-functions" CACHE STRING "" FORCE)
+endif()
 set(CMAKE_C_FLAGS "-Wall" CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "" FORCE)
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "" FORCE)
 
 # Check C++17 or C++14 support
 include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
-CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
-if(COMPILER_SUPPORTS_CXX17)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17" CACHE STRING "" FORCE)
-   add_definitions(-DCOMPILEDWITHC17)
-   message(STATUS "Using flag -std=c++17 (required for ONNX Runtime).")
-elseif(COMPILER_SUPPORTS_CXX14)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
-   add_definitions(-DCOMPILEDWITHC14)
-   message(STATUS "Using flag -std=c++14 (Eigen 5.x requires C++14).")
-else()
-   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} requires at least C++14. Please use a different C++ compiler.")
-endif()
+# Force C++17 support for Clang
+set(COMPILER_SUPPORTS_CXX17 TRUE)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17" CACHE STRING "" FORCE)
+add_definitions(-DCOMPILEDWITHC17)
+message(STATUS "Using flag -std=c++17 (required for ONNX Runtime).")
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
@@ -48,14 +45,18 @@ MESSAGE(${OpenCV_VERSION})
 
 find_path(EIGEN3_INCLUDE_DIR "Eigen/Core"
     HINTS "$ENV{EIGEN3_ROOT}" "$ENV{EIGEN3_ROOT_PATH}"
-    PATHS "$ENV{CPACK_RPM_SOURCE_DIR}/include" "/usr/local/include" "/usr/include"
+    PATHS "$ENV{CPACK_RPM_SOURCE_DIR}/include" "/usr/local/include" "/usr/include" "/usr/include/eigen3"
     "E:/msys64/mingw64/include/eigen3"
     "E:/msys64/mingw64/include/eigen3/Eigen"
     "E:/msys64/mingw64/include"
 )
 if(NOT EIGEN3_INCLUDE_DIR)
-    # Fallback: try cmake default search
-    find_path(EIGEN3_INCLUDE_DIR "Eigen/Core")
+    find_path(EIGEN3_INCLUDE_DIR "Eigen/Core"
+        PATHS "/usr/include/eigen3"
+              "/usr/local/include/eigen3"
+              "/usr/include"
+              "/usr/local/include"
+    )
 endif()
 if(NOT EIGEN3_INCLUDE_DIR)
     message(FATAL_ERROR "Eigen3 not found!")
@@ -79,15 +80,47 @@ find_package(realsense2 QUIET)
 find_path(ONNXRUNTIME_INCLUDE_DIR "onnxruntime_cxx_api.h"
     HINTS "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/include"
              "E:/msys64/mingw64/include"
-             "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
+             "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build"
+             "/usr/include"
+             "/usr/local/include"
+             "$ENV{HOME}/onnxruntime/include"
+             "${CMAKE_SOURCE_DIR}/../libs/onnxruntime-linux/include"
+             "${CMAKE_SOURCE_DIR}/../libs/onnxruntime/include"
+)
 if(ONNXRUNTIME_INCLUDE_DIR)
     message(STATUS "ONNX Runtime found at: ${ONNXRUNTIME_INCLUDE_DIR}")
 else()
     message(STATUS "ONNX Runtime headers not found - semantic segmentation disabled")
 endif()
 
-set(DS_SLAM_INCLUDE_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/include")
-set(DS_SLAM_LIB_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
+# Boost for DBoW2 serialization
+find_path(BOOST_INCLUDE_DIR "boost/serialization/serialization.hpp"
+    HINTS "E:/msys64/mingw64/include"
+    PATHS "/usr/local/include" "/usr/include" "/usr/include/boost"
+)
+if(NOT BOOST_INCLUDE_DIR)
+    message(FATAL_ERROR "Boost headers not found!")
+endif()
+message(STATUS "Boost found at: ${BOOST_INCLUDE_DIR}")
+
+# DS-SLAM slam-system integration
+if(WIN32)
+    set(DS_SLAM_INCLUDE_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/include")
+    set(DS_SLAM_LIB_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
+else()
+    set(DS_SLAM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../slam-system/include")
+    set(DS_SLAM_LIB_DIR "${CMAKE_SOURCE_DIR}/../slam-system/build")
+endif()
+
+# Check if slam-system libraries exist
+set(DS_SLAM_AVAILABLE FALSE)
+if(EXISTS "${DS_SLAM_LIB_DIR}/libSlamVisualizer.a" OR EXISTS "${DS_SLAM_LIB_DIR}/SlamVisualizer.lib")
+    set(DS_SLAM_AVAILABLE TRUE)
+    message(STATUS "DS-SLAM SlamVisualizer found - visualization enabled")
+else()
+    message(STATUS "DS-SLAM SlamVisualizer not found - visualization disabled")
+    add_definitions(-DDS_SLAM_DISABLED=1)
+endif()
 
 include_directories(
 ${PROJECT_SOURCE_DIR}
@@ -96,15 +129,18 @@ ${PROJECT_SOURCE_DIR}/include/CameraModels
 ${PROJECT_SOURCE_DIR}/Thirdparty/Sophus
 ${EIGEN3_INCLUDE_DIR}
 ${Pangolin_INCLUDE_DIRS}
-${DS_SLAM_INCLUDE_DIR}
+${BOOST_INCLUDE_DIR}
 )
+if(DS_SLAM_AVAILABLE)
+    include_directories(${DS_SLAM_INCLUDE_DIR})
+endif()
 if(ONNXRUNTIME_INCLUDE_DIR)
     include_directories(${ONNXRUNTIME_INCLUDE_DIR})
 endif()
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
-add_library(${PROJECT_NAME} SHARED
+add_library(${PROJECT_NAME} STATIC
 src/System.cc
 src/Tracking.cc
 src/LocalMapping.cc
@@ -117,14 +153,15 @@ src/MapPoint.cc
 src/KeyFrame.cc
 src/Atlas.cc
 src/Map.cc
-src/MapDrawer.cc
 src/Optimizer.cc
 src/Frame.cc
 src/KeyFrameDatabase.cc
 src/Sim3Solver.cc
-src/Viewer.cc
 src/ImuTypes.cc
 src/G2oTypes.cc
+src/G2oTypesVertex.cc
+src/G2oTypesEdge.cc
+src/G2oTypesInertial.cc
 src/CameraModels/Pinhole.cpp
 src/CameraModels/KannalaBrandt8.cpp
 src/OptimizableTypes.cpp
@@ -145,12 +182,10 @@ include/MapPoint.h
 include/KeyFrame.h
 include/Atlas.h
 include/Map.h
-include/MapDrawer.h
 include/Optimizer.h
 include/Frame.h
 include/KeyFrameDatabase.h
 include/Sim3Solver.h
-include/Viewer.h
 include/ImuTypes.h
 include/G2oTypes.h
 include/CameraModels/GeometricCamera.h
@@ -164,6 +199,17 @@ include/SerializationUtils.h
 include/Config.h
 include/Settings.h)
 
+# Conditionally add Pangolin-dependent sources
+if(Pangolin_FOUND)
+    target_sources(${PROJECT_NAME} PRIVATE
+    src/MapDrawer.cc
+    src/Viewer.cc
+    include/MapDrawer.h
+    include/Viewer.h
+    )
+    target_link_libraries(${PROJECT_NAME} ${Pangolin_LIBRARIES})
+endif()
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
   WINDOWS_EXPORT_ALL_SYMBOLS ON
   LINK_FLAGS "-Wl,--export-all-symbols"
@@ -174,34 +220,56 @@ add_subdirectory(Thirdparty/g2o)
 # Resolve library paths to absolute
 # DBoW2 is STATIC - link directly to .a file to avoid picking up stale .dll.a
 set(DBOW2_LIB "${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.a")
-find_library(SEGMENTATOR_LIB SemanticSegmentator PATHS "${DS_SLAM_LIB_DIR}" NO_DEFAULT_PATH)
-find_library(ORT_LIB libonnxruntime.dll.a PATHS "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/lib" NO_DEFAULT_PATH)
 
-if(NOT DBOW2_LIB)
-    message(WARNING "DBoW2 library not found, using fallback path")
-    set(DBOW2_LIB "${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.a")
-endif()
-if(NOT SEGMENTATOR_LIB)
-    message(WARNING "SemanticSegmentator library not found, using fallback path")
-    set(SEGMENTATOR_LIB "${DS_SLAM_LIB_DIR}/libSemanticSegmentator.a")
-endif()
-if(NOT ORT_LIB)
-    message(WARNING "onnxruntime.dll.a not found, using fallback path")
-    set(ORT_LIB "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/lib/libonnxruntime.dll.a")
+if(DS_SLAM_AVAILABLE)
+    find_library(SEGMENTATOR_LIB SemanticSegmentator PATHS "${DS_SLAM_LIB_DIR}" NO_DEFAULT_PATH)
+    find_library(STATICMAPPER_LIB StaticMapper PATHS "${DS_SLAM_LIB_DIR}" NO_DEFAULT_PATH)
+    find_library(VISUALIZER_LIB SlamVisualizer PATHS "${DS_SLAM_LIB_DIR}" NO_DEFAULT_PATH)
+    find_library(ORT_LIB onnxruntime PATHS "${PROJECT_SOURCE_DIR}/../libs/onnxruntime/lib" "${PROJECT_SOURCE_DIR}/../libs/onnxruntime-linux/lib" NO_DEFAULT_PATH)
+    
+    if(NOT SEGMENTATOR_LIB)
+        message(WARNING "SemanticSegmentator library not found, using fallback path")
+        set(SEGMENTATOR_LIB "${DS_SLAM_LIB_DIR}/libSemanticSegmentator.a")
+    endif()
+    if(NOT STATICMAPPER_LIB)
+        message(WARNING "StaticMapper library not found, using fallback path")
+        set(STATICMAPPER_LIB "${DS_SLAM_LIB_DIR}/libStaticMapper.a")
+    endif()
+    if(NOT VISUALIZER_LIB)
+        message(WARNING "SlamVisualizer library not found, using fallback path")
+        set(VISUALIZER_LIB "${DS_SLAM_LIB_DIR}/libSlamVisualizer.a")
+    endif()
+    if(NOT ORT_LIB)
+        message(WARNING "onnxruntime library not found, using fallback path")
+        set(ORT_LIB "${PROJECT_SOURCE_DIR}/../libs/onnxruntime/lib/libonnxruntime.so")
+    endif()
 endif()
 
 target_link_libraries(${PROJECT_NAME}
-${OpenCV_LIBS}
 ${EIGEN3_LIBS}
-${Pangolin_LIBRARIES}
 ${DBOW2_LIB}
 g2o
--lboost_serialization-mt
+-lboost_serialization
 -lcrypto
--lopengl32
-${SEGMENTATOR_LIB}
-${ORT_LIB}
+${OpenCV_LIBS}
 )
+
+if(DS_SLAM_AVAILABLE)
+    target_link_libraries(${PROJECT_NAME}
+    ${SEGMENTATOR_LIB}
+    ${STATICMAPPER_LIB}
+    ${VISUALIZER_LIB}
+    )
+    # Only link ONNX Runtime if available
+    if(EXISTS "${ORT_LIB}")
+        target_link_libraries(${PROJECT_NAME} ${ORT_LIB})
+    endif()
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} winhttp)
+    else()
+        target_link_libraries(${PROJECT_NAME} curl)
+    endif()
+endif()
 
 # If RealSense SDK is found the library is added and its examples compiled
 if(realsense2_FOUND)
@@ -221,7 +289,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D)
 
 add_executable(rgbd_tum
         Examples/RGB-D/rgbd_tum.cc)
-target_link_libraries(rgbd_tum ${PROJECT_NAME})
+if(WIN32)
+    target_link_libraries(rgbd_tum ${PROJECT_NAME} g2o ${OpenCV_LIBS} winhttp)
+else()
+    target_link_libraries(rgbd_tum ${PROJECT_NAME} g2o ${OpenCV_LIBS} curl)
+endif()
+if(DS_SLAM_AVAILABLE)
+    target_link_libraries(rgbd_tum ${SEGMENTATOR_LIB} ${STATICMAPPER_LIB} ${VISUALIZER_LIB})
+    if(EXISTS "${ORT_LIB}")
+        target_link_libraries(rgbd_tum ${ORT_LIB})
+    endif()
+endif()
 
 if(realsense2_FOUND)
     add_executable(rgbd_realsense_D435i
@@ -351,9 +429,9 @@ endif()
 # RGB-D examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/RGB-D)
 
-add_executable(rgbd_tum_old
-        Examples_old/RGB-D/rgbd_tum.cc)
-target_link_libraries(rgbd_tum_old ${PROJECT_NAME})
+# add_executable(rgbd_tum_old
+#         Examples_old/RGB-D/rgbd_tum.cc)
+# target_link_libraries(rgbd_tum_old ${PROJECT_NAME})
 
 if(realsense2_FOUND)
     add_executable(rgbd_realsense_D435i_old
@@ -374,17 +452,17 @@ endif()
 #Stereo examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Stereo)
 
-add_executable(stereo_kitti_old
-        Examples_old/Stereo/stereo_kitti.cc)
-target_link_libraries(stereo_kitti_old ${PROJECT_NAME})
+# add_executable(stereo_kitti_old
+#         Examples_old/Stereo/stereo_kitti.cc)
+# target_link_libraries(stereo_kitti_old ${PROJECT_NAME})
 
-add_executable(stereo_euroc_old
-        Examples_old/Stereo/stereo_euroc.cc)
-target_link_libraries(stereo_euroc_old ${PROJECT_NAME})
+# add_executable(stereo_euroc_old
+#         Examples_old/Stereo/stereo_euroc.cc)
+# target_link_libraries(stereo_euroc_old ${PROJECT_NAME})
 
-add_executable(stereo_tum_vi_old
-        Examples_old/Stereo/stereo_tum_vi.cc)
-target_link_libraries(stereo_tum_vi_old ${PROJECT_NAME})
+# add_executable(stereo_tum_vi_old
+#         Examples_old/Stereo/stereo_tum_vi.cc)
+# target_link_libraries(stereo_tum_vi_old ${PROJECT_NAME})
 
 if(realsense2_FOUND)
     add_executable(stereo_realsense_t265_old
@@ -399,21 +477,21 @@ endif()
 #Monocular examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Monocular)
 
-add_executable(mono_tum_old
-        Examples_old/Monocular/mono_tum.cc)
-target_link_libraries(mono_tum_old ${PROJECT_NAME})
+# add_executable(mono_tum_old
+#         Examples_old/Monocular/mono_tum.cc)
+# target_link_libraries(mono_tum_old ${PROJECT_NAME})
 
-add_executable(mono_kitti_old
-        Examples_old/Monocular/mono_kitti.cc)
-target_link_libraries(mono_kitti_old ${PROJECT_NAME})
+# add_executable(mono_kitti_old
+#         Examples_old/Monocular/mono_kitti.cc)
+# target_link_libraries(mono_kitti_old ${PROJECT_NAME})
 
-add_executable(mono_euroc_old
-        Examples_old/Monocular/mono_euroc.cc)
-target_link_libraries(mono_euroc_old ${PROJECT_NAME})
+# add_executable(mono_euroc_old
+#         Examples_old/Monocular/mono_euroc.cc)
+# target_link_libraries(mono_euroc_old ${PROJECT_NAME})
 
-add_executable(mono_tum_vi_old
-        Examples_old/Monocular/mono_tum_vi.cc)
-target_link_libraries(mono_tum_vi_old ${PROJECT_NAME})
+# add_executable(mono_tum_vi_old
+#         Examples_old/Monocular/mono_tum_vi.cc)
+# target_link_libraries(mono_tum_vi_old ${PROJECT_NAME})
 
 if(realsense2_FOUND)
     add_executable(mono_realsense_t265_old
@@ -428,13 +506,13 @@ endif()
 #Monocular inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Monocular-Inertial)
 
-add_executable(mono_inertial_euroc_old
-        Examples_old/Monocular-Inertial/mono_inertial_euroc.cc)
-target_link_libraries(mono_inertial_euroc_old ${PROJECT_NAME})
+# add_executable(mono_inertial_euroc_old
+#         Examples_old/Monocular-Inertial/mono_inertial_euroc.cc)
+# target_link_libraries(mono_inertial_euroc_old ${PROJECT_NAME})
 
-add_executable(mono_inertial_tum_vi_old
-        Examples_old/Monocular-Inertial/mono_inertial_tum_vi.cc)
-target_link_libraries(mono_inertial_tum_vi_old ${PROJECT_NAME})
+# add_executable(mono_inertial_tum_vi_old
+#         Examples_old/Monocular-Inertial/mono_inertial_tum_vi.cc)
+# target_link_libraries(mono_inertial_tum_vi_old ${PROJECT_NAME})
 
 if(realsense2_FOUND)
     add_executable(mono_inertial_realsense_t265_old
@@ -449,13 +527,13 @@ endif()
 #Stereo Inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples_old/Stereo-Inertial)
 
-add_executable(stereo_inertial_euroc_old
-        Examples_old/Stereo-Inertial/stereo_inertial_euroc.cc)
-target_link_libraries(stereo_inertial_euroc_old ${PROJECT_NAME})
+# add_executable(stereo_inertial_euroc_old
+#         Examples_old/Stereo-Inertial/stereo_inertial_euroc.cc)
+# target_link_libraries(stereo_inertial_euroc_old ${PROJECT_NAME})
 
-add_executable(stereo_inertial_tum_vi_old
-        Examples_old/Stereo-Inertial/stereo_inertial_tum_vi.cc)
-target_link_libraries(stereo_inertial_tum_vi_old ${PROJECT_NAME})
+# add_executable(stereo_inertial_tum_vi_old
+#         Examples_old/Stereo-Inertial/stereo_inertial_tum_vi.cc)
+# target_link_libraries(stereo_inertial_tum_vi_old ${PROJECT_NAME})
 
 if(realsense2_FOUND)
     add_executable(stereo_inertial_realsense_t265_old

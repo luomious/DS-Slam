@@ -45,9 +45,12 @@ public:
                 m_opts.AppendExecutionProvider_CUDA(cudaOpts);
             }
 
-            m_session = std::make_unique<Ort::Session>(m_env,
-                std::wstring(onnxPath.begin(), onnxPath.end()).c_str(),
-                m_opts);
+#ifdef _WIN32
+            std::wstring widePath(onnxPath.begin(), onnxPath.end());
+            m_session = std::make_unique<Ort::Session>(m_env, widePath.c_str(), m_opts);
+#else
+            m_session = std::make_unique<Ort::Session>(m_env, onnxPath.c_str(), m_opts);
+#endif
 
             size_t numInputs = m_session->GetInputCount();
             for (size_t i = 0; i < numInputs; ++i) {
@@ -69,9 +72,12 @@ public:
             if (useGPU) {
                 try {
                     m_opts = Ort::SessionOptions();
-                    m_session = std::make_unique<Ort::Session>(m_env,
-                        std::wstring(onnxPath.begin(), onnxPath.end()).c_str(),
-                        m_opts);
+#ifdef _WIN32
+                    std::wstring widePath(onnxPath.begin(), onnxPath.end());
+                    m_session = std::make_unique<Ort::Session>(m_env, widePath.c_str(), m_opts);
+#else
+                    m_session = std::make_unique<Ort::Session>(m_env, onnxPath.c_str(), m_opts);
+#endif
 
                     size_t numInputs = m_session->GetInputCount();
                     m_inputNames.clear();
@@ -209,7 +215,7 @@ public:
         }
 
         // Morphological dilation
-        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(11, 11));
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
         cv::dilate(binaryMask, binaryMask, kernel);
 
         auto t1 = std::chrono::high_resolution_clock::now();

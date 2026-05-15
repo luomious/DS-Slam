@@ -76,7 +76,11 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${g2o_CXX_FLAGS}")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${g2o_C_FLAGS}")
 
 # Eigen3 - use pre-set or manual path (Eigen 5.x compatible)
-SET(EIGEN3_INCLUDE_DIR ${G2O_EIGEN3_INCLUDE} "E:/msys64/mingw64/include/eigen3" CACHE PATH "Directory of Eigen3")
+IF(WIN32)
+  SET(EIGEN3_INCLUDE_DIR ${G2O_EIGEN3_INCLUDE} "E:/msys64/mingw64/include/eigen3" CACHE PATH "Directory of Eigen3")
+ELSE()
+  SET(EIGEN3_INCLUDE_DIR ${G2O_EIGEN3_INCLUDE} "/usr/include/eigen3" CACHE PATH "Directory of Eigen3")
+ENDIF()
 SET(G2O_EIGEN3_INCLUDE ${EIGEN3_INCLUDE_DIR} CACHE PATH "Directory of Eigen3")
 SET(EIGEN3_FOUND TRUE)
 
@@ -112,6 +116,7 @@ g2o/core/hyper_graph_action.h
 g2o/core/base_multi_edge.h           
 g2o/core/hyper_graph.cpp
 g2o/core/base_multi_edge.hpp         
+g2o/core/base_multi_edge_instantiations.cpp
 g2o/core/hyper_graph.h
 g2o/core/base_unary_edge.h          
 g2o/core/linear_solver.h
@@ -181,7 +186,9 @@ g2o/stuff/property.cpp
 g2o/stuff/property.h       
 )
 
-set_target_properties(g2o PROPERTIES
-  WINDOWS_EXPORT_ALL_SYMBOLS ON
-  LINK_FLAGS "-Wl,--export-all-symbols"
-)
+if(MINGW)
+  set_target_properties(g2o PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+    LINK_FLAGS "-Wl,--export-all-symbols"
+  )
+endif()

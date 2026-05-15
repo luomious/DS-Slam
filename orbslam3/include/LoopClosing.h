@@ -82,7 +82,9 @@ public:
 
     bool isFinished();
 
+#if HAS_PANGOLIN
     Viewer* mpViewer;
+#endif
 
 #ifdef REGISTER_TIMES
 

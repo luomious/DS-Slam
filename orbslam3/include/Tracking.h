@@ -32,7 +32,9 @@
 #include "ORBVocabulary.h"
 #include "KeyFrameDatabase.h"
 #include "ORBextractor.h"
+#if HAS_PANGOLIN
 #include "MapDrawer.h"
+#endif
 #include "System.h"
 #include "ImuTypes.h"
 #include "Settings.h"
@@ -58,7 +60,11 @@ class Tracking
 
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Tracking(System* pSys, ORBVocabulary* pVoc, FrameDrawer* pFrameDrawer, MapDrawer* pMapDrawer, Atlas* pAtlas,
+    Tracking(System* pSys, ORBVocabulary* pVoc, FrameDrawer* pFrameDrawer,
+#if HAS_PANGOLIN
+             MapDrawer* pMapDrawer,
+#endif
+             Atlas* pAtlas,
              KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq=std::string());
 
     ~Tracking();
@@ -278,9 +284,11 @@ protected:
     System* mpSystem;
     
     //Drawers
+#if HAS_PANGOLIN
     Viewer* mpViewer;
-    FrameDrawer* mpFrameDrawer;
     MapDrawer* mpMapDrawer;
+#endif
+    FrameDrawer* mpFrameDrawer;
     bool bStepByStep;
 
     //Atlas

@@ -40,7 +40,11 @@ Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
 
 System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
                const bool bUseViewer, const int initFr, const string &strSequence):
-    mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false), mbResetActiveMap(false),
+    mSensor(sensor),
+#if HAS_PANGOLIN
+    mpViewer(static_cast<Viewer*>(NULL)),
+#endif
+    mbReset(false), mbResetActiveMap(false),
     mbActivateLocalizationMode(false), mbDeactivateLocalizationMode(false), mbShutDown(false)
 {
     // Output welcome message
@@ -183,12 +187,17 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Create Drawers. These are used by the Viewer
     mpFrameDrawer = new FrameDrawer(mpAtlas);
+#if HAS_PANGOLIN
     mpMapDrawer = new MapDrawer(mpAtlas, strSettingsFile, settings_);
+#endif
 
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
     cout << "Seq. Name: " << strSequence << endl;
-    mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
+    mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer,
+#if HAS_PANGOLIN
+    mpMapDrawer,
+#endif
                              mpAtlas, mpKeyFrameDatabase, strSettingsFile, mSensor, settings_, strSequence);
 
     //Initialize the Local Mapping thread and launch
@@ -226,6 +235,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     //usleep(10*1000*1000);
 
     // DS-SLAM M3: Initialize Semantic Segmentator
+#ifndef DS_SLAM_DISABLED
     mpSegmentator = nullptr;  // Initialize to nullptr
     cv::FileNode segNode = fsSettings["Segmentator"];
     if(!segNode.empty())
@@ -244,8 +254,10 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
             }
         }
     }
+#endif
 
     //Initialize the Viewer thread and launch
+#if HAS_PANGOLIN
     if(bUseViewer)
     //if(false) // TODO
     {
@@ -255,6 +267,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         mpLoopCloser->mpViewer = mpViewer;
         mpViewer->both = mpFrameDrawer->both;
     }
+#endif
 
     // Fix verbosity
     Verbose::SetTh(Verbose::VERBOSITY_QUIET);
@@ -542,7 +555,9 @@ void System::Shutdown()
     cout << "Shutdown" << endl;
 
     // DS-SLAM M3: release segmentator
+#ifndef DS_SLAM_DISABLED
     if (mpSegmentator) { delete mpSegmentator; mpSegmentator = nullptr; }
+#endif
 
     mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
@@ -1407,6 +1422,7 @@ float System::GetImageScale()
 }
 
 // DS-SLAM M3: init semantic segmentator
+#ifndef DS_SLAM_DISABLED
 void System::InitSegmentator(const string &onnxPath)
 {
     if (mpSegmentator) {
@@ -1420,6 +1436,29 @@ void System::InitSegmentator(const string &onnxPath)
     else
         cerr << "DS-SLAM M3: WARNING - Segmentator failed to load!" << endl;
 }
+
+void System::SaveStaticMap(const string& plyPath, const string& gridPath)
+{
+    if (!plyPath.empty())
+        mStaticMapper.ExportPLY(plyPath);
+    if (!gridPath.empty())
+        mStaticMapper.ExportGridMap(gridPath);
+    cout << "DS-SLAM M5: Saved " << mStaticMapper.GetPointCount()
+         << " points from " << mStaticMapper.GetKeyframeCount()
+         << " keyframes" << endl;
+}
+
+void System::InitVisualizer(const string& backendUrl)
+{
+    if (mpVisualizer) {
+        delete mpVisualizer;
+        mpVisualizer = nullptr;
+    }
+    cout << "DS-SLAM M6: Initializing visualizer: " << backendUrl << endl;
+    mpVisualizer = new SLAM::SlamVisualizer(backendUrl);
+    cout << "DS-SLAM M6: Visualizer initialized." << endl;
+}
+#endif
 
 #ifdef REGISTER_TIMES
 void System::InsertRectTime(double& time)

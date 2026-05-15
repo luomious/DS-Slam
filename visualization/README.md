@@ -16,14 +16,14 @@
 双击运行 `start_visualizer.bat`，或手动执行：
 
 ```bash
-cd E:\VSCode\VSCode-Workspace\DS-Slam\visualization
-.venv\Scripts\uvicorn.exe simple_backend:app --host 0.0.0.0 --port 8080
+cd E:\VSCode\VSCode-Workspace\DS-Slam
+.venv\Scripts\uvicorn.exe visualization.backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 2. 打开浏览器访问
 
 ```
-http://localhost:8080
+http://localhost:8000
 ```
 
 ### 3. 查看 SLAM 结果
