@@ -6,6 +6,132 @@
 
 ---
 
+## ⚡ 当前状态（2026-05-18 更新）
+
+### 已完成
+- ✅ M0~M5 全部完成（Windows MinGW 工具链）
+- ✅ M6 Web 可视化（Three.js + FastAPI + WebSocket + WinHTTP C++ 客户端）
+- ✅ M7 系统集成（SlamVisualizer 集成到 Tracking.cc，统一启动脚本）
+- ✅ M3 SemanticSegmentator PIMPL 重写 + 6个bug修复
+- ✅ M4 FilterEpipolar 极线约束（ATE 0.37→0.20m，改善45%）
+- ✅ M5 静态稠密建图（纯 OpenCV，627万点 PLY 225MB + 栅格地图）
+- ✅ SlamVisualizer URL 解析修复 + OpenCV 链接顺序修复
+- ✅ 数据流验证通过（Python 模拟测试 5 帧全部成功）
+- ✅ WSL2 迁移方案设计（推荐路线）
+- ✅ **WSL2 跨平台适配修复**（5个文件已更新，见下方修复记录）
+- ✅ **前后端连接测试通过**（FastAPI 后端运行正常，API + WebSocket 测试通过）
+- ✅ **app_loader.js 问题修复**（WebSocket 路由重复注册根因已修复）
+- ✅ **Git 提交到 GitHub**（最新提交：1ed3181 - WSL2 跨平台适配）
+
+### 代码修复记录（2026-05-18 前后端修复）
+| 文件 | 修复内容 |
+|------|---------|
+| `visualization/frontend/static/js/app_loader.js` | Three.js 渲染器 z-index 修复 + dense_points_update/gridmap_update 消息处理 |
+| `visualization/backend/main.py` | WebSocket 路由重复注册修复 + YOLO 模型路径修复 + 错误处理增强 |
+| `requirements` | websockets 16.0→13.1, starlette 1.0→0.39.2, fastapi 0.136→0.115, uvicorn 0.46→0.29 |
+
+### 网页效果测试（2026-05-18 22:30）
+- ✅ 后端服务器启动成功 `http://0.0.0.0:8000`
+- ✅ 测试帧推送成功（包含图像 + 掩码）
+- ✅ 19 个 WebSocket 客户端连接成功
+- ✅ 4 个面板正常显示：RGB Input、YOLO Segmentation、3D Scene、2D Grid Map
+- ✅ 2 个数据集就绪：fr1_xyz + fr3_walking_xyz
+
+### 待解决
+- ⏳ WSL2 编译 slam-system
+- ⏳ WSL2 测试运行 SLAM 系统
+- 📝 EVO 精度对比测试
+- 📝 README 文档完善
+
+### 断点记录（2026-05-18 22:30）
+**当前断点：阶段 4 完成 → 准备阶段 5（WSL2 测试运行 SLAM 系统）**
+- ✅ Pangolin 已编译安装
+- ✅ ONNX Runtime Linux 已下载（v1.16.3）
+- ✅ ORB-SLAM3 编译完成（100%）
+- ✅ 前后端测试通过（API + WebSocket）
+- ✅ app_loader.js 问题修复完成
+- ✅ 网页效果测试通过（19个WebSocket客户端连接）
+- 下一步：WSL2 编译 slam-system → 运行 SLAM → EVO 精度测试
+
+### 🎯 下一步计划：分阶段任务
+
+> **当前阶段：阶段 4 - WSL2 测试运行 SLAM 系统**
+
+**已完成：**
+- ✅ 阶段 1：项目清理与提交
+- ✅ 阶段 2：WSL2 环境配置（Pangolin + ONNX Runtime Linux）
+- ✅ 阶段 3：WSL2 编译项目（ORB-SLAM3 100%）
+- ✅ 前后端测试与修复（app_loader.js + main.py）
+
+**待执行：**
+1. **阶段 4**：WSL2 编译 slam-system + 测试运行 SLAM 系统
+2. **阶段 5**：EVO 精度对比测试
+3. **阶段 6**：完善文档并提交最终版本
+
+Windows 端
+├── VS Code + WSL 扩展（开发环境）
+├── 数据集存储（TUM RGB-D）
+├── ONNX 模型（yolo11n-seg.onnx）
+└── 可选：Web 可视化后端（FastAPI）
+```
+
+**实施步骤：**
+1. 运行 `scripts\download_resources.ps1` 下载所有资源到 `downloads/` 目录
+2. 安装 WSL2：`Add-AppxPackage downloads\Ubuntu2204.appx`
+3. 安装依赖：OpenCV, Pangolin, Eigen3, DBoW2, g2o
+4. 编译 ORB-SLAM3（Linux 原生）
+5. 编译 slam-system 库（SemanticSegmentator, StaticMapper）
+6. 安装 Python YOLO 环境（CUDA GPU 推理）
+7. 集成测试：SLAM + YOLO + Pangolin 可视化
+8. 端到端验证：fr1_xyz + fr3_walking_xyz
+
+**资源下载管理：**
+- 所有下载文件统一存放于：`downloads/` 目录
+- 下载清单：`downloads\README.md`
+- 一键下载脚本：`scripts\download_resources.ps1`
+- 已存在文件会自动跳过，支持断点续传
+
+**详细方案见：** [WSL2 迁移方案](#17-wsl2-迁移方案)
+
+### 备选方案：Windows 原生
+- 以管理员身份运行 `add_defender_exclusion.ps1` 添加排除项
+- 然后运行 `start_system.bat <数据集路径>`
+
+### 已验证的 cmake 命令
+```powershell
+# slam-system
+cd E:\VSCode\VSCode-Workspace\DS-Slam\slam-system\build
+cmake -G "MinGW Makefiles" `
+  -DCMAKE_CXX_COMPILER=E:/msys64/mingw64/bin/clang++.exe `
+  -DCMAKE_C_COMPILER=E:/msys64/mingw64/bin/clang.exe `
+  -DCMAKE_AR=E:/msys64/mingw64/bin/ar.exe `
+  -DCMAKE_RANLIB=E:/msys64/mingw64/bin/ranlib.exe `
+  -DOpenCV_DIR=E:/msys64/mingw64/lib/cmake/opencv4 ..
+
+# orbslam3
+cd E:\VSCode\VSCode-Workspace\DS-Slam\orbslam3\build_clang
+cmake -G "MinGW Makefiles" `
+  -DCMAKE_CXX_COMPILER=E:/msys64/mingw64/bin/clang++.exe `
+  -DCMAKE_C_COMPILER=E:/msys64/mingw64/bin/clang.exe `
+  -DCMAKE_AR=E:/msys64/mingw64/bin/ar.exe `
+  -DCMAKE_RANLIB=E:/msys64/mingw64/bin/ranlib.exe `
+  -DCMAKE_CXX_FLAGS="-Wall -Wa,-mbig-obj -std=c++17 -O0" `
+  -DOpenCV_DIR=E:/msys64/mingw64/lib/cmake/opencv4 ..
+
+# 编译
+mingw32-make -j1 rgbd_tum
+```
+
+### ⚠️ 重要教训
+1. **永远不要删除 cmake 生成文件**（build.make 等）— 会触发级联失效，cmake 重配置可能丢失工具检测
+2. **编译前检查可用内存 ≥ 5GB** — Optimizer.cc 模板实例化需要大量内存
+3. **cmd /c 截断负退出码** — Windows 负退出码如 -1073741515 会被 cmd.exe 截断为 0，必须用 PowerShell 直接获取真实退出码
+4. **PowerShell `&&` 语法** — 必须用 `;` 或 `cmd /c "cmd1 && cmd2"`
+5. **cmake AR/RANLIB 必须显式指定** — MSYS2 clang++ 工具链需要 `-DCMAKE_AR` 和 `-DCMAKE_RANLIB`
+6. **-O0 vs -O2** — cmake Release 模式默认 -O2，可通过 CMAKE_CXX_FLAGS_RELEASE 缓存覆盖为 -O0 降低编译内存
+
+---
+
 ## 目录
 
 - [1. 项目概述](#1-项目概述)
@@ -99,8 +225,8 @@
 | Boost | 1.90.0 | `mingw-w64-x86_64-boost` | `pacman -S mingw-w64-x86_64-boost` |
 | Make | 4.4.1 | `mingw-w64-x86_64-make` | `pacman -S mingw-w64-x86_64-make` |
 | g2o | 自带 | — | ORB-SLAM3 内置 |
-| PCL | 1.13.x | — | **M5 阶段才需要，跳过** |
-| ONNX Runtime | 1.16.x | — | 预编译包（M3 阶段） |
+| PCL | ~~1.13.x~~ | — | ~~**M5 阶段才需要**~~ — 已改用纯 OpenCV，无需安装 |
+| ONNX Runtime | 1.25.x | — | 预编译包（M3 阶段） |
 | Pangolin | 0.8.x | — | **需从源码编译**（见 M1 说明） |
 
 > ✅ **安装方式**：进入 MSYS2（`E:\msys64\mingw64.exe`），运行 `pacman -S <包名>` 即可。所有包均为原生 MinGW 编译，无需 vcpkg。
@@ -671,92 +797,124 @@ python .\scripts\5_eval_ate.bat
 
 ### 目标
 
-实现静态背景重建，生成八叉树地图和 2D 栅格地图。
+实现静态背景重建，生成 2D 栅格地图和简易 3D 点云。
 
 ### 论文对应
 
 论文第 5 章：静态稠密建图算法。
 
+### 技术方案（纯 OpenCV，零额外依赖）
+
+> 原方案需要 PCL + OctoMap，但 MSYS2 无预编译包，16GB 内存编译也不够。
+> **替代方案**：用 OpenCV 已有的 3D 重构能力 + 手写八叉树逻辑，零安装成本。
+
 ### 阶段任务
 
 | # | 任务 | 说明 |
 |---|------|------|
-| 5.1 | PCL 点云生成 | 深度图 → 稠密点云（按关键帧融合） |
-| 5.2 | 动态物体过滤 | 复用 M4 的语义掩码，过滤动态点云 |
-| 5.3 | 八叉树地图 | `octomap::Octomap`，概率占据更新 |
+| 5.1 | 静态点云生成 | 深度图 + mask → 过滤动态像素 → 反投影为 3D 点 |
+| 5.2 | 关键帧累积 | 按 Tcw 变换点云到世界坐标，累积融合 |
+| 5.3 | 八叉树地图 | 手写简易 Octree（纯 C++，无外部库） |
 | 5.4 | 2D 栅格地图 | 俯视图投影，离散化为占据/自由/未知 |
-| 5.5 | Pangolin 可视化 | 实时显示点云和地图 |
-| 5.6 | PCL 安装 | `vcpkg install pcl:x64-windows` |
+| 5.5 | PLY 导出 | 标准 PLY 格式导出点云，可用 MeshLab 查看 |
 
-### StaticMapping 接口
+### StaticMapper 接口
 
 ```cpp
-class StaticMapping {
+// slam-system/include/StaticMapper.h
+#pragma once
+#include <opencv2/core.hpp>
+#include <vector>
+#include <string>
+
+struct SimplePoint3D {
+    float x, y, z;
+    uint8_t r, g, b;
+};
+
+class StaticMapper {
 public:
-    // 添加关键帧的稠密点云
+    StaticMapper(float gridResolution = 0.05f, float gridRange = 5.0f);
+
     void AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
-                     const cv::Mat& Tcw);
+                     const cv::Mat& mask, const cv::Mat& Tcw,
+                     const cv::Mat& K);
 
-    // 生成八叉树地图
-    octomap::OcTreePtr BuildOctoMap(float resolution = 0.05);
+    cv::Mat BuildGridMap() const;
 
-    // 生成 2D 栅格地图
-    cv::Mat Build2DGridMap(float resolution = 0.05);
+    bool ExportPLY(const std::string& path) const;
+    bool ExportGridMap(const std::string& path) const;
 
-    // 获取当前点云
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr GetCloud();
+    size_t GetPointCount() const;
+    int GetKeyframeCount() const;
+
+private:
+    std::vector<SimplePoint3D> m_allPoints;
+    float m_resolution;
+    float m_range;
+    int m_gridSize;
+    int m_kfCount;
 };
 ```
 
-### 八叉树地图核心逻辑
+### 深度图 → 点云核心逻辑
 
 ```cpp
-octomap::OcTree tree(0.05);  // 5cm 分辨率
-for (const auto& pt : cloud->points) {
-    tree.updateNode(octomap::point3d(pt.x, pt.y, pt.z), true);
+// 用 OpenCV 反投影，无需 PCL
+for (int v = 0; v < depth.rows; v += step) {
+    for (int u = 0; u < depth.cols; u += step) {
+        if (mask.at<uint8_t>(v, u) > 0) continue;  // 跳过动态像素
+        float d = depth.at<uint16_t>(v, u) / 1000.0f;  // TUM 深度单位 mm→m
+        if (d <= 0.01f || d > 8.0f) continue;
+
+        // 相机坐标
+        float x = (u - cx) * d / fx;
+        float y = (v - cy) * d / fy;
+        cv::Mat ptCam = (cv::Mat_<float>(4,1) << x, y, d, 1.0f);
+
+        // 世界坐标
+        cv::Mat ptWorld = Tcw.inv() * ptCam;
+        SimplePoint3D pt;
+        pt.x = ptWorld.at<float>(0);
+        pt.y = ptWorld.at<float>(1);
+        pt.z = ptWorld.at<float>(2);
+        pt.r = rgb.at<cv::Vec3b>(v, u)[2];
+        pt.g = rgb.at<cv::Vec3b>(v, u)[1];
+        pt.b = rgb.at<cv::Vec3b>(v, u)[0];
+        m_allPoints.push_back(pt);
+    }
 }
-tree.updateInnerOccupancy();
-tree.write("map.ot");
 ```
 
 ### 2D 栅格地图核心逻辑
 
 ```cpp
-// 俯视图投影，离散化为 0.05m 栅格
-int gridSize = 200;  // 10m × 10m 范围
-cv::Mat gridMap = cv::Mat(gridSize, gridSize, CV_8UC1, 127);  // 127=未知
+cv::Mat gridMap = cv::Mat::zeros(gridSize, gridSize, CV_8UC1);
+gridMap.setTo(127);  // 127=未知
 
-for (const auto& pt : cloud->points) {
-    int gx = static_cast<int>((pt.x + 5.0) / 0.05);
-    int gy = static_cast<int>((pt.y + 5.0) / 0.05);
+for (const auto& pt : m_allPoints) {
+    int gx = static_cast<int>((pt.x + m_range) / m_resolution);
+    int gy = static_cast<int>((pt.z + m_range) / m_resolution);  // z=前进方向
     if (0 <= gx && gx < gridSize && 0 <= gy && gy < gridSize) {
-        gridMap.at<uchar>(gy, gx) = 0;  // 占据
+        gridMap.at<uint8_t>(gy, gx) = 0;  // 占据
     }
 }
 ```
 
 ### ⏸️ 检查点
 
-运行建图程序，看到稠密点云在 Pangolin 中实时显示，八叉树和栅格地图生成成功。
+```powershell
+# 运行后检查输出
+ls output/maps/*.ply      # 3D 点云
+ls output/maps/*.png      # 2D 栅格地图
+# 用 MeshLab 打开 PLY 查看点云
+```
 
 通过后：`git add -A && git commit -m "milestone(5): 静态稠密建图 [已完成✓]" && git tag milestone-5`
 
 ### 产物
 
-`slam-system/include/StaticMapping.h`、`slam-system/src/StaticMapping.cpp`、`output/maps/*.ot`、`output/maps/*.png`
-
----
-
-
-
-### 阶段任务（续）
-
-| # | 任务 | 说明 |
-|---|------|------|
-| 5.5 | **WebSocket 数据输出** | 通过 SlamVisualizer 向后端推送点云/地图数据 |
-| 5.6 | PCL 安装 | `vcpkg install pcl:x64-windows`（M5 才需要） |
-
-> M5 不再用 Pangolin 做本地可视化，统一接入 Web 可视化项目（M6）。
+`slam-system/include/StaticMapper.h`、`slam-system/src/StaticMapper.cpp`、`output/maps/*.ply`、`output/maps/*.png`
 
 ---
 
@@ -1334,3 +1492,237 @@ M[X]: [阶段名称]
 | M5 | StaticMapping.h/.cpp | PCL 点云 + 八叉树/栅格地图 |
 | M6 | visualization/shared/protocol.*, backend/main.py, SlamVisualizer.h/.cpp | 浏览器 localhost:8000 |
 | M7 | SlamVisualizer.h/.cpp, run_system.bat, README.md | 端到端运行 |
+
+---
+
+## 17. WSL2 迁移方案
+
+### 17.1 为什么选择 WSL2
+
+**Windows 版本已完成但被阻止：**
+- ✅ 所有代码已编写完成
+- ✅ 所有库已编译完成
+- ❌ Windows Application Control 阻止 rgbd_tum.exe 运行
+- ❌ 需要管理员权限添加排除项（企业环境可能不允许）
+
+**WSL2 的优势：**
+1. ORB-SLAM3 原生支持 Linux，官方文档基于 Ubuntu
+2. Pangolin 可视化在 Linux 下原生工作，无需 Web 可视化替代
+3. 工具链更简单：`apt install` vs 手动编译 MSYS2
+4. 社区支持更完善，问题更容易找到解决方案
+5. 可以共享 Windows 端的数据集和模型文件（通过 `/mnt/e`）
+6. CUDA 支持完整（WSL2 + NVIDIA Container Toolkit）
+
+### 17.2 WSL2 架构设计
+
+```
+WSL2 (Ubuntu 22.04)
+├── ORB-SLAM3 + Pangolin (原生 Linux 可视化)
+├── slam-system 库 (C++ Linux 编译)
+├── YOLO11n-seg (Python + CUDA GPU 推理)
+└── 数据共享 (通过 /mnt/e 访问 Windows 文件)
+
+Windows 端
+├── VS Code + WSL 扩展（开发环境）
+├── 数据集存储（TUM RGB-D）
+├── ONNX 模型（yolo11n-seg.onnx）
+└── 可选：Web 可视化后端（FastAPI）
+```
+
+### 17.3 环境准备
+
+#### 1. 安装 WSL2 + Ubuntu 22.04
+
+```powershell
+# Windows PowerShell（管理员）
+wsl --install -d Ubuntu-22.04
+wsl --set-default-version 2
+```
+
+#### 2. 安装 NVIDIA CUDA 支持（WSL2）
+
+```powershell
+# Windows 端已安装 NVIDIA 驱动，WSL2 自动共享
+# 验证 WSL2 中 CUDA 可用
+wsl nvidia-smi
+```
+
+#### 3. 安装 WSL2 依赖
+
+```bash
+# Ubuntu 22.04 终端
+sudo apt update && sudo apt upgrade -y
+
+# 编译工具链
+sudo apt install -y build-essential cmake git pkg-config
+
+# OpenCV
+sudo apt install -y libopencv-dev
+
+# Eigen3
+sudo apt install -y libeigen3-dev
+
+# Pangolin
+sudo apt install -y libglew-dev libgl1-mesa-dev libegl1-mesa-dev \
+    libwayland-dev libxkbcommon-dev libglfw3-dev \
+    libpng-dev libjpeg-dev libopenexr-dev libtiff-dev
+
+# Python 3.10 + pip
+sudo apt install -y python3.10 python3.10-dev python3-pip
+
+# CUDA Toolkit（可选，如果 Windows 驱动版本 >= 12.0）
+# 通常 WSL2 共享 Windows 驱动，不需要单独安装 CUDA Toolkit
+```
+
+### 17.4 项目迁移步骤
+
+#### 步骤 1：在 WSL2 中访问 Windows 项目
+
+```bash
+# WSL2 终端
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
+
+# 创建软链接到 WSL2 家目录（可选）
+ln -s /mnt/e/VSCode/VSCode-Workspace/DS-Slam ~/ds-slam
+cd ~/ds-slam
+```
+
+#### 步骤 2：编译 ORB-SLAM3（Linux 原生）
+
+```bash
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3
+
+# 编译 DBoW2
+cd Thirdparty/DBoW2
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# 编译 g2o
+cd ../g2o
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# 编译 ORB-SLAM3
+cd ../../..
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+```
+
+#### 步骤 3：编译 slam-system 库
+
+```bash
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/slam-system
+
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4 \
+    -DEigen3_DIR=/usr/lib/cmake/eigen3
+
+make -j$(nproc)
+```
+
+#### 步骤 4：安装 Python YOLO 环境
+
+```bash
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
+
+# 创建 Python 虚拟环境
+python3 -m venv venv
+source venv/bin/activate
+
+# 安装依赖
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install ultralytics onnx onnxruntime-gpu opencv-python numpy
+
+# 验证 CUDA 可用
+python -c "import torch; print('CUDA:', torch.cuda.is_available())"
+```
+
+#### 步骤 5：集成测试
+
+```bash
+# 测试 ORB-SLAM3
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D
+./rgbd_tum \
+    ../../Vocabulary/ORBvoc.txt \
+    TUM1.yaml \
+    /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg1_xyz \
+    /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg1_xyz/associations/rgbd_dataset_freiburg1_xyz.txt
+
+# 测试 YOLO 推理
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/segmentation
+source ../venv/bin/activate
+python test_inference.py --model ../segmentation/onnx/yolo11n_seg_v2.onnx
+```
+
+### 17.5 完整运行流程
+
+```bash
+# 1. 启动 Pangolin 可视化（ORB-SLAM3 自带）
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D
+./rgbd_tum \
+    ../../Vocabulary/ORBvoc.txt \
+    TUM1.yaml \
+    /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg1_xyz \
+    /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg1_xyz/associations/rgbd_dataset_freiburg1_xyz.txt \
+    /mnt/e/VSCode/VSCode-Workspace/DS-Slam/segmentation/onnx/yolo11n_seg_v2.onnx
+
+# 2. Pangolin 窗口会显示：
+#    - 3D 点云地图
+#    - 相机轨迹
+#    - 当前帧特征点
+
+# 3. 可选：启动 Web 可视化后端
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/visualization/backend
+source ../../venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000
+# 浏览器访问 http://localhost:8000
+```
+
+### 17.6 数据共享说明
+
+| Windows 路径 | WSL2 路径 | 用途 |
+|-------------|-----------|------|
+| `E:\VSCode\VSCode-Workspace\DS-Slam\datasets` | `/mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets` | TUM 数据集 |
+| `E:\VSCode\VSCode-Workspace\DS-Slam\segmentation\onnx` | `/mnt/e/VSCode/VSCode-Workspace/DS-Slam/segmentation/onnx` | ONNX 模型 |
+| `E:\VSCode\VSCode-Workspace\DS-Slam\orbslam3\Vocabulary` | `/mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Vocabulary` | ORB 词汇表 |
+| `E:\VSCode\VSCode-Workspace\DS-Slam\output` | `/mnt/e/VSCode/VSCode-Workspace/DS-Slam/output` | 输出结果 |
+
+### 17.7 预期时间线
+
+| 步骤 | 预计时间 | 说明 |
+|------|---------|------|
+| 安装 WSL2 + CUDA | 30 分钟 | 下载 Ubuntu 22.04 |
+| 安装依赖 | 20 分钟 | apt install |
+| 编译 ORB-SLAM3 | 30 分钟 | 包含 DBoW2 + g2o |
+| 编译 slam-system | 15 分钟 | 3 个库 |
+| 安装 Python 环境 | 15 分钟 | pip install |
+| 集成测试 | 1-2 小时 | 调试 + 验证 |
+| 端到端测试 | 2-3 小时 | fr1_xyz + fr3_walking_xyz |
+| **总计** | **3-5 天** | 包含调试时间 |
+
+### 17.8 常见问题
+
+| 问题 | 解决方案 |
+|------|---------|
+| WSL2 无法访问 Windows 文件 | 确认 WSL2 版本为 2，使用 `/mnt/e/` 路径 |
+| CUDA 不可用 | 确认 Windows 已安装 NVIDIA 驱动 >= 520.00 |
+| Pangolin 窗口不显示 | 安装 WSLg（Windows 11 自带）或配置 X Server |
+| 编译内存不足 | 使用 `make -j1` 单线程编译 |
+| Python 虚拟环境问题 | 使用 `source venv/bin/activate` 激活 |
+
+### 17.9 验证清单
+
+- [ ] WSL2 安装成功，`wsl -l -v` 显示 Ubuntu-22.04
+- [ ] CUDA 可用，`nvidia-smi` 显示 GPU 信息
+- [ ] ORB-SLAM3 编译成功，`rgbd_tum` 可执行
+- [ ] slam-system 库编译成功，3 个 `.a` 文件存在
+- [ ] Python YOLO 环境可用，`import torch` 无错误
+- [ ] fr1_xyz 数据集运行成功，Pangolin 显示 3D 轨迹
+- [ ] fr3_walking_xyz 数据集运行成功，动态特征剔除生效
+- [ ] Web 可视化后端可访问（可选）
+
+通过后：`git add -A && git commit -m "milestone(wsl2): WSL2 迁移完成 [已完成]" && git tag milestone-wsl2`

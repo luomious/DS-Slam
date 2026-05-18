@@ -1,6 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html data-cache-bust="1779112124">
 <head>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DS-SLAM Visualizer</title>
@@ -8,11 +12,39 @@
     <script type="importmap">
     {
         "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            "three": "/static/js/three/three.module.js",
+            "three/addons/": "/static/js/three/"
         }
     }
     </script>
+    <!-- Fallback: if module load fails, progress bar still works -->
+    <script>
+    // Ensure progress bar is visible even before module loads
+    (function(){
+        var pb = document.getElementById('progress-bar');
+        var pt = document.getElementById('progress-text');
+        if(pb) pb.style.width = '5%';
+        if(pt) pt.textContent = 'Loading app...';
+    })();
+    </script>
+    <style>
+        /* Ensure 3D scene container properly hosts the canvas */
+        #scene-content {
+            position: relative;
+        }
+        #scene-content canvas {
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            z-index: 0;
+        }
+        /* Placeholder must be above canvas when visible, removed when hidden */
+        #scene-content .placeholder {
+            z-index: 1;
+        }
+    </style>
 </head>
 <body>
     <header class="app-header">
@@ -53,9 +85,16 @@
         <div class="header-right">
             <span class="version-badge">M0-M6</span>
         </div>
-    </header>
+      <div class="header-controls" style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+      <select id="dataset-select" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px 8px;font-size:12px;">
+        <option value="">Loading datasets...</option>
+      </select>
+      <button id="btn-load-test" onclick="loadTestFrame()" style="background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">Test Frame</button>
+      <button id="btn-reset-view" onclick="resetView()" style="background:#30363d;color:#c9d1d9;border:1px solid #444;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">Reset View</button>
+    </div>
+  </header>
 
-    <main class="app-main">
+    <main class="app-main" style="padding-bottom:44px">
         <div class="panel-grid">
             <div class="panel rgb-panel">
                 <div class="panel-header">
@@ -136,6 +175,19 @@
         </div>
     </main>
 
-    <script type="module" src="/static/js/app.js?v=2026051301"></script>
+    <!-- Connection Progress Bar -->
+    <div id="progress-overlay" style="position:fixed;bottom:0;left:0;right:0;height:40px;background:#161b22;border-top:1px solid #30363d;z-index:1000;display:flex;align-items:center;padding:0 16px;gap:12px">
+        <div style="flex:1;height:8px;background:#21262d;border-radius:4px;overflow:hidden">
+            <div id="progress-bar" style="height:100%;width:0%;background:#f85149;border-radius:4px;transition:width 0.5s,background 0.5s"></div>
+        </div>
+        <span id="progress-text" style="font-size:11px;color:#8b949e;white-space:nowrap;font-family:monospace">Initializing...</span>
+        <span id="init-status" style="font-size:10px;color:#484f58;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis"></span>
+    </div>
+
+    <!-- Non-module loader: avoids ES module import chain failures blocking everything -->
+    
+
+    <script src="/static/js/app_loader.js?v=1779112124&t=1779112124"></script>
+<script>console.log('[CACHE-BUST] Page loaded at 1779112124, JS version: v1779112124');</script>
 </body>
 </html>
