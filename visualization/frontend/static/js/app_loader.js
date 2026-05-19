@@ -687,6 +687,53 @@
     }
     loadDatasets();
     
+    // Dataset selection handler
+    const datasetSelect = document.getElementById('dataset-select');
+    if (datasetSelect) {
+        datasetSelect.addEventListener('change', async function() {
+            const selectedDataset = this.value;
+            if (!selectedDataset) return;
+            
+            console.log('[Dataset] Switching to:', selectedDataset);
+            const btn = document.getElementById('btn-load-test');
+            if (btn) {
+                btn.textContent = 'Loading...';
+                btn.disabled = true;
+            }
+            
+            try {
+                const resp = await fetch('/api/select_dataset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({dataset: selectedDataset})
+                });
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    console.log('[Dataset] Switched successfully:', data);
+                    if (btn) {
+                        btn.textContent = 'Test Frame';
+                        btn.disabled = false;
+                    }
+                    // Reload test frame with new dataset
+                    loadTestFrame();
+                } else {
+                    console.error('[Dataset] Switch failed:', resp.status);
+                    if (btn) {
+                        btn.textContent = 'Error!';
+                        setTimeout(() => { btn.textContent = 'Test Frame'; btn.disabled = false; }, 2000);
+                    }
+                }
+            } catch(e) {
+                console.error('[Dataset] Switch error:', e);
+                if (btn) {
+                    btn.textContent = 'Error!';
+                    setTimeout(() => { btn.textContent = 'Test Frame'; btn.disabled = false; }, 2000);
+                }
+            }
+        });
+    }
+    
     async function loadTestFrame() {
         try {
             const btn = document.getElementById('btn-load-test');

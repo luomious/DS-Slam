@@ -1,6 +1,6 @@
 # DS-SLAM 项目进度跟踪
 
-> 最后更新：2026-05-18 22:30
+> 最后更新：2026-05-19 17:00
 
 ## 📊 当前状态
 
@@ -8,7 +8,7 @@
 **Git Tag**: `milestone-wsl2-adaptation`
 **远程仓库**: https://github.com/luomious/DS-Slam
 
-**当前阶段**: 阶段 4 完成 → 准备阶段 5（WSL2 测试运行 SLAM 系统）
+**当前阶段**: 阶段 5 完成 → 准备阶段 6（GUI 数据集切换功能 + 文档完善）
 
 ## ✅ 已完成
 
@@ -25,6 +25,10 @@
 | WSL2 适配 | ✅ | 3个核心文件已修复，支持 Linux 编译 |
 | 前后端测试 | ✅ | FastAPI 后端运行正常，API + WebSocket 测试通过 |
 | 网页效果测试 | ✅ | 浏览器预览正常，19个WebSocket客户端连接成功 |
+| **阶段 5.1 SLAM 基础测试** | ✅ | fr1_xyz 静态数据集，794帧，exit 0 |
+| **阶段 5.2 编译产物验证** | ✅ | 所有库文件和可执行文件完整 |
+| **阶段 5.3 DS-SLAM 完整测试** | ✅ | fr3_walking_xyz 动态场景，语义分割正常 |
+| **阶段 5.4 EVO 精度评估** | ✅ | 静态 RMSE 1.06cm，动态 RMSE 1.58cm |
 
 ## 🔧 本次修复记录（2026-05-18）
 
@@ -62,6 +66,46 @@
 - ✅ 4 个面板正常显示：RGB Input、YOLO Segmentation、3D Scene、2D Grid Map
 - ✅ 2 个数据集就绪：fr1_xyz + fr3_walking_xyz
 
+### 6. 阶段 5 完整测试（2026-05-19 17:00）
+
+#### 5.1 SLAM 基础测试
+- ✅ ORB-SLAM3 编译完成（100%，生成 `libORB_SLAM3.a` + `rgbd_tum`）
+- ✅ fr1_xyz 静态数据集：794 帧全部处理，837 地图点
+- ✅ 中位跟踪时间：72ms，平均：74ms
+- ✅ 轨迹文件生成：`CameraTrajectory.txt`（82KB，794 帧）
+
+#### 5.2 编译产物验证
+- ✅ `libORB_SLAM3.a`：ORB-SLAM3 核心库
+- ✅ `libSemanticSegmentator.a`（36K）：语义分割模块
+- ✅ `libStaticMapper.a`（20K）：静态稠密建图模块
+- ✅ `libSlamVisualizer.a`（109K）：Web 可视化客户端
+- ✅ `rgbd_tum`（50M）：RGB-D SLAM 可执行文件
+- ✅ `test_segmentator`（38K）：分割测试程序
+- ✅ `libonnxruntime.so.1.16.3`（17M）：ONNX Runtime 共享库
+
+#### 5.3 DS-SLAM 完整功能测试
+- ✅ 语义分割模型加载：`yolo11n_seg_v2.onnx`
+- ✅ fr3_walking_xyz 动态场景：827 帧全部处理
+- ✅ 动态物体检测正常：掩码占比 23-34%
+- ✅ 静态点云生成：6,476,441 个点（827 关键帧）
+- ✅ 中位跟踪时间：79ms，平均：84ms
+
+#### 5.4 EVO 精度评估
+- ✅ EVO 工具安装成功（v1.36.4）
+- ✅ fr1_xyz 静态场景评估：
+  - RMSE: 0.0106 m (1.06 cm)
+  - Mean: 0.0091 m
+  - Median: 0.0078 m
+  - Max: 0.0302 m
+  - 匹配帧数：792/794
+- ✅ fr3_walking_xyz 动态场景评估：
+  - RMSE: 0.0158 m (1.58 cm)
+  - Mean: 0.0139 m
+  - Median: 0.0126 m
+  - Max: 0.0722 m
+  - 匹配帧数：826/827
+- ✅ 精度对比：动态场景误差略高（预期），语义分割有效过滤动态物体
+
 ## 🖥️ WSL2 环境状态
 
 | 组件 | 状态 | 版本 |
@@ -75,28 +119,25 @@
 | **Pangolin** | ✅ 已编译安装 | 最新 |
 | **ONNX Runtime Linux** | ✅ 已下载 | v1.16.3 |
 | **ORB-SLAM3 编译** | ✅ 编译完成 | 100% |
-| **slam-system 编译** | ⏳ 编译中 | - |
+| **slam-system 编译** | ✅ 编译完成 | 100% |
+| **EVO 评估工具** | ✅ 已安装 | v1.36.4 |
 
 ## 🎯 下一步计划
 
-### 阶段 4：WSL2 测试运行 SLAM 系统
+### 阶段 6：GUI 数据集切换功能 + 文档完善
 
-1. 确认 slam-system 编译完成
-2. 运行 `scripts/wsl2_run.sh <数据集路径>`
-3. 验证 SLAM 输出（轨迹、地图点、稠密点云）
-4. 启动可视化后端查看实时数据
+1. 实现前端数据集切换 UI
+2. 添加更多 TUM 数据集支持
+3. 更新 README.md
+4. 完善 WSL2_DEPLOYMENT.md
+5. 提交最终版本
 
-### 阶段 5：EVO 精度对比测试
+### 阶段 5 完成总结（已完成）
 
-1. 安装 EVO 工具
-2. 运行 TUM fr1_xyz 和 fr3_walking_xyz 数据集
-3. 对比 ATE/RPE 指标
-
-### 阶段 6：文档完善
-
-1. 更新 README.md
-2. 完善 WSL2_DEPLOYMENT.md
-3. 提交最终版本
+✅ **阶段 5.1**：SLAM 基础测试通过（fr1_xyz 静态场景）
+✅ **阶段 5.2**：所有编译产物验证完整
+✅ **阶段 5.3**：DS-SLAM 完整功能测试通过（fr3_walking_xyz 动态场景）
+✅ **阶段 5.4**：EVO 精度评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 
 ## 📁 重要文件位置
 
@@ -146,48 +187,30 @@ cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
 4. **ONNX Runtime Linux 已下载到** `libs/onnxruntime-linux/`
 5. **Pangolin 已编译安装到** `/usr/local/`
 
-## 🔴 断点记录（2026-05-18 22:30）
+## 🔴 断点记录（2026-05-19 17:00）
 
-**当前断点：阶段 4 完成 → 准备阶段 5（WSL2 测试运行 SLAM 系统）**
+**当前断点：阶段 5 完成 → 准备阶段 6（GUI 数据集切换功能 + 文档完善）**
 
 ### 已完成
 - ✅ Pangolin 编译安装（依赖：libboost, libcurl, libepoxy 等）
 - ✅ ONNX Runtime Linux v1.16.3 下载完成（`libs/onnxruntime-linux/`）
-- ✅ ORB-SLAM3 编译完成（100%，生成 `libORB_SLAM3.a`）
-- ✅ rgbd_tum 可执行文件生成（`orbslam3/Examples/RGB-D/rgbd_tum`，51MB）
-- ✅ 数据集就绪（`datasets/tum/rgbd_dataset_freiburg1_xyz`）
-- ✅ ORBvoc.txt 词汇表就绪（`orbslam3/Vocabulary/ORBvoc.txt`）
+- ✅ ORB-SLAM3 编译完成（100%，生成 `libORB_SLAM3.a` + `rgbd_tum`）
+- ✅ slam-system 编译完成（100%，生成 3 个库文件 + test_segmentator）
+- ✅ 数据集就绪（fr1_xyz + fr3_walking_xyz）
+- ✅ SLAM 系统运行测试通过（两个数据集）
+- ✅ EVO 精度评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 - ✅ 前后端测试通过（API + WebSocket）
 - ✅ 网页效果测试通过（19个WebSocket客户端连接）
+- ✅ 轨迹文件生成（CameraTrajectory.txt + KeyFrameTrajectory.txt）
+- ✅ 静态稠密地图生成（static_map.ply + grid_map.png）
 
 ### 下一步执行
 ```bash
-# 1. WSL2 编译 slam-system
-wsl -d Ubuntu-22.04 bash -c "cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam && ./scripts/wsl2_build.sh"
-
-# 2. 运行 SLAM 系统（fr1_xyz 测试）
-wsl -d Ubuntu-22.04 bash -c "cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam && ./scripts/wsl2_run.sh datasets/tum/rgbd_dataset_freiburg1_xyz"
-
-# 3. 启动可视化后端（Windows 端）
-cd .venv\Scripts && .\python.exe ..\..\visualization\backend\main.py
-
-# 4. 访问前端查看实时数据
-# http://localhost:8000/
-```
-- ✅ 数据集就绪（`datasets/tum/rgbd_dataset_freiburg1_xyz`）
-- ✅ ORBvoc.txt 词汇表就绪（`orbslam3/Vocabulary/ORBvoc.txt`）
-- ✅ SLAM 系统运行中（fr1_xyz 测试）
-
-### 下一步执行
-```bash
-# 1. 检查 SLAM 运行状态
-wsl -d Ubuntu-22.04 bash -c "ps aux | grep rgbd_tum"
-
-# 2. 查看输出文件
-ls -la /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D/CameraTrajectory.txt
-
-# 3. 运行动态场景测试（fr3_walking_xyz）
-wsl -d Ubuntu-22.04 bash -c "cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D && ./rgbd_tum ../../Vocabulary/ORBvoc.txt ../../Examples/RGB-D/TUM3.yaml /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_walking_xyz /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_walking_xyz/associations/rgbd_dataset_freiburg3_walking_xyz.txt"
+# 1. 实现前端数据集切换 UI
+# 2. 添加更多 TUM 数据集支持
+# 3. 更新 README.md
+# 4. 完善 WSL2_DEPLOYMENT.md
+# 5. 提交最终版本到 GitHub
 ```
 
 ### 数据集位置

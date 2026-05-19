@@ -720,17 +720,22 @@ def create_app() -> FastAPI:
         import base64, numpy as np
         from pathlib import Path
         
-        # Find dataset
-        ds_base = Path("/mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum")
-        datasets = sorted([d for d in ds_base.iterdir() if d.is_dir()]) if ds_base.exists() else []
-        if not datasets:
-            return {"error": "No datasets found"}
+        # Use active dataset if set, otherwise find first available
+        if hasattr(app.state, 'active_dataset') and app.state.active_dataset:
+            ds = app.state.active_dataset
+            rgb_files = app.state.active_rgb_files
+        else:
+            ds_base = PROJECT_ROOT / "datasets" / "tum"
+            datasets = sorted([d for d in ds_base.iterdir() if d.is_dir()]) if ds_base.exists() else []
+            if not datasets:
+                return {"error": "No datasets found"}
+            
+            ds = datasets[0]
+            rgb_dir = ds / "rgb"
+            rgb_files = sorted([f for f in rgb_dir.iterdir() if f.suffix == '.png']) if rgb_dir.exists() else []
         
-        ds = datasets[0]
-        rgb_dir = ds / "rgb"
-        rgb_files = sorted([f for f in rgb_dir.iterdir() if f.suffix == '.png']) if rgb_dir.exists() else []
         if not rgb_files:
-            return {"error": "No RGB files in " + str(ds)}
+            return {"error": "No RGB files in dataset"}
         
         # Read middle frame
         img_path = rgb_files[len(rgb_files)//2]
@@ -809,7 +814,7 @@ def create_app() -> FastAPI:
     async def list_datasets():
         """List available TUM RGB-D datasets."""
         from pathlib import Path
-        ds_base = Path("/mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum")
+        ds_base = PROJECT_ROOT / "datasets" / "tum"
         datasets = []
         if ds_base.exists():
             for d in sorted(ds_base.iterdir()):
@@ -826,6 +831,36 @@ def create_app() -> FastAPI:
                         "ready": has_rgb and has_depth and has_assoc
                     })
         return {"datasets": datasets, "count": len(datasets)}
+
+    @app.post("/api/select_dataset")
+    async def select_dataset(payload: dict):
+        """Select active dataset for test frame pushing."""
+        from pathlib import Path
+        dataset_name = payload.get("dataset", "")
+        if not dataset_name:
+            return {"error": "No dataset specified"}
+        
+        ds_path = PROJECT_ROOT / "datasets" / "tum" / dataset_name
+        if not ds_path.exists():
+            return {"error": f"Dataset not found: {dataset_name}"}
+        
+        rgb_dir = ds_path / "rgb"
+        if not rgb_dir.exists():
+            return {"error": f"No RGB directory in {dataset_name}"}
+        
+        rgb_files = sorted([f for f in rgb_dir.iterdir() if f.suffix == '.png'])
+        if not rgb_files:
+            return {"error": f"No RGB files in {dataset_name}"}
+        
+        app.state.active_dataset = ds_path
+        app.state.active_rgb_files = rgb_files
+        
+        return {
+            "status": "ok",
+            "dataset": dataset_name,
+            "path": str(ds_path),
+            "rgb_count": len(rgb_files)
+        }
 
     # WebSocket handler
     async def ws_slam(ws: WebSocket):
