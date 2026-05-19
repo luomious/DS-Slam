@@ -5,14 +5,26 @@ export class SlamWebSocket {
         this.ws = null;
         this.reconnectInterval = 3000;
         this.connected = false;
+        this._onConnect = null;
+        this._onDisconnect = null;
     }
 
     connect() {
-        this.ws = new WebSocket(this.url);
+        try {
+            this.ws = new WebSocket(this.url);
+        } catch(e) {
+            console.error('[WS] Constructor failed:', e);
+            return;
+        }
 
         this.ws.onopen = () => {
             this.connected = true;
             this.onStatusChange(true);
+            // Notify visualizer
+            if (window.visualizer) {
+                window.visualizer._wsConnected = true;
+                window.visualizer._updateProgressBar();
+            }
             console.log('[WS] Connected to', this.url);
         };
 
@@ -28,6 +40,10 @@ export class SlamWebSocket {
         this.ws.onclose = () => {
             this.connected = false;
             this.onStatusChange(false);
+            if (window.visualizer) {
+                window.visualizer._wsConnected = false;
+                window.visualizer._updateProgressBar();
+            }
             console.log('[WS] Disconnected, reconnecting in', this.reconnectInterval, 'ms');
             setTimeout(() => this.connect(), this.reconnectInterval);
         };
@@ -54,10 +70,10 @@ export class SlamWebSocket {
         const text = document.getElementById('ws-text');
         
         if (indicator) {
-            indicator.className = `ws-indicator ${connected ? 'connected' : ''}`;
+            indicator.className = 'ws-indicator ' + (connected ? 'connected' : '');
         }
         if (dot) {
-            dot.className = `ws-dot ${connected ? 'connected' : ''}`;
+            dot.className = 'ws-dot ' + (connected ? 'connected' : '');
         }
         if (text) {
             text.textContent = connected ? 'Connected' : 'Disconnected';

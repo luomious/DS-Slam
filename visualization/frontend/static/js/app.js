@@ -3,7 +3,19 @@ import { ThreeRenderer } from './renderer.js';
 
 class SlamVisualizer {
     constructor() {
-        this.renderer3D = new ThreeRenderer('scene-content');
+        this._setStatus('Initializing...');
+        
+        try {
+            this.renderer3D = new ThreeRenderer('scene-content');
+            if (!this.renderer3D.enabled) {
+                this._setStatus('ERROR: ThreeRenderer failed');
+                return;
+            }
+        } catch(e) {
+            this._setStatus('ERROR: ThreeRenderer: ' + e.message);
+            throw e;
+        }
+
         this.ws = null;
         this.frameCount = 0;
         this.keyframeCount = 0;
@@ -11,14 +23,34 @@ class SlamVisualizer {
         this.lastFrameTime = performance.now();
         this.fps = 0;
         this.frameInterval = 1000;
+        this.lastRenderTime = 0;
+        this.minRenderInterval = 33;
+        this.pendingFrame = null;
+        this.pendingMapPoints = null;
+        this.canvasSizes = {};
+        this.rgbImg = new Image();
+        this.yoloImg = new Image();
+        this._wsConnected = false;
+        this._dataLoaded = { trajectory: false, mapPoints: false, pointcloud: false };
+        this._initTime = performance.now();
 
+        this._setStatus('Connecting WebSocket...');
         this.initWebSocket();
+        this._setStatus('Loading static data...');
         this.loadStaticData();
         this.startFPSCounter();
+        this.startRenderLoop();
+        
+        this._setStatus('Ready');
+    }
+
+    _setStatus(msg) {
+        const el = document.getElementById('init-status');
+        if (el) el.textContent = msg;
     }
 
     initWebSocket() {
-        const wsUrl = `ws://${location.host}/ws/slam`;
+        const wsUrl = 'ws://' + location.host + '/ws/slam';
         this.ws = new SlamWebSocket(wsUrl, (data) => this.handleMessage(data));
         this.ws.connect();
     }
@@ -30,71 +62,82 @@ class SlamVisualizer {
             if (elapsed > 0) {
                 this.fps = Math.round(this.frameCount * 1000 / elapsed);
             }
-            document.getElementById('fps-value').textContent = this.fps;
+            const fpsEl = document.getElementById('fps-value');
+            if (fpsEl) fpsEl.textContent = this.fps;
             this.frameCount = 0;
             this.lastFrameTime = now;
         }, this.frameInterval);
     }
 
-    async loadStaticData() {
-        setTimeout(() => {
-            this.loadTrajectory().catch(console.warn);
-            this.loadPointCloud().catch(console.warn);
-            this.loadGridMap().catch(console.warn);
-        }, 500);
+    startRenderLoop() {
+        const loop = () => {
+            if (this.pendingFrame) {
+                this._renderFrame(this.pendingFrame);
+                this.pendingFrame = null;
+            }
+            if (this.pendingMapPoints) {
+                this._renderMapPoints(this.pendingMapPoints);
+                this.pendingMapPoints = null;
+            }
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
     }
 
-    async loadTrajectory() {
+    async loadStaticData() {
+        // Load trajectory
         try {
             const resp = await fetch('/api/trajectory');
             if (resp.ok) {
                 const data = await resp.json();
-                if (data.poses && data.poses.length > 0) {
+                const poseCount = data.poses ? data.poses.length : 0;
+                this._setStatus('Trajectory: ' + poseCount + ' poses');
+                if (poseCount > 0 && this.renderer3D && this.renderer3D.enabled) {
                     this.renderer3D.addTrajectory(data.poses);
-                    this.keyframeCount = data.poses.length;
+                    this.keyframeCount = poseCount;
                     this.updateUI();
                     this.hidePlaceholder('scene-content');
+                    this._dataLoaded.trajectory = true;
                 }
+            } else {
+                this._setStatus('Trajectory: HTTP ' + resp.status);
             }
         } catch (e) {
-            console.warn('Trajectory load failed:', e);
+            this._setStatus('Trajectory FAILED: ' + e.message);
         }
-    }
 
-    async loadPointCloud() {
+        // Load map points
+        try {
+            const resp = await fetch('/api/map_points');
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.coords && data.coords.length >= 3 && data.point_count > 0 && this.renderer3D && this.renderer3D.enabled) {
+                    this.renderer3D.updateMapPoints(data.coords);
+                    this.hidePlaceholder('scene-content');
+                    this.mapPointCount = data.point_count;
+                    this.updateUI();
+                    this._dataLoaded.mapPoints = true;
+                }
+            }
+        } catch (e) { /* ignore */ }
+
+        // Load point cloud (optional)
         try {
             const resp = await fetch('/api/pointcloud');
             if (resp.ok) {
                 const meta = await resp.json();
-                this.mapPointCount = meta.vertex_count || 0;
-                this.updateUI();
-                document.getElementById('pointcloud-info').textContent = 
-                    `${(meta.vertex_count / 10000).toFixed(1)}万点`;
-
                 if (meta.vertex_count > 0) {
                     const points = await this.fetchPLYPoints();
-                    if (points.length > 0) {
+                    if (points.length > 0 && this.renderer3D && this.renderer3D.enabled) {
                         this.renderer3D.addPointCloud(points);
                         this.hidePlaceholder('scene-content');
+                        this._dataLoaded.pointcloud = true;
                     }
                 }
             }
-        } catch (e) {
-            console.warn('Point cloud load failed:', e);
-        }
-    }
+        } catch (e) { /* ignore */ }
 
-    async fetchPLYPoints() {
-        try {
-            const resp = await fetch('/api/plypoints');
-            if (!resp.ok) return [];
-            return await resp.json();
-        } catch (e) {
-            return [];
-        }
-    }
-
-    async loadGridMap() {
+        // Load grid map (optional)
         try {
             const resp = await fetch('/api/gridmap');
             if (resp.ok) {
@@ -103,181 +146,204 @@ class SlamVisualizer {
                     const url = URL.createObjectURL(blob);
                     const canvas = document.getElementById('grid-canvas');
                     const container = document.querySelector('.grid-panel .image-container');
-                    
                     if (canvas && container) {
                         const ctx = canvas.getContext('2d');
                         const img = new Image();
-                        
                         img.onload = () => {
-                            const maxWidth = container.clientWidth;
-                            const maxHeight = container.clientHeight;
-                            
-                            const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
-                            const targetWidth = Math.floor(img.width * scale);
-                            const targetHeight = Math.floor(img.height * scale);
-                            
-                            canvas.width = targetWidth;
-                            canvas.height = targetHeight;
-                            
+                            const dims = this._getCanvasDims(canvas, container);
+                            canvas.width = dims.w;
+                            canvas.height = dims.h;
                             ctx.imageSmoothingEnabled = false;
-                            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-                            
+                            ctx.drawImage(img, 0, 0, dims.w, dims.h);
                             this.hidePlaceholder('grid-panel');
-                            document.getElementById('grid-size').textContent = 
-                                `${img.width}×${img.height}`;
                         };
-                        
                         img.src = url;
                     }
                 }
             }
-        } catch (e) {
-            console.warn('Grid map load failed:', e);
+        } catch (e) { /* ignore */ }
+
+        this._updateProgressBar();
+    }
+
+    _updateProgressBar() {
+        const bar = document.getElementById('progress-bar');
+        const text = document.getElementById('progress-text');
+        if (!bar || !text) return;
+
+        const wsOk = this._wsConnected;
+        const trajOk = this._dataLoaded.trajectory;
+        const ptsOk = this._dataLoaded.mapPoints;
+        const liveOk = this.frameCount > 0;
+
+        let steps = 0;
+        let total = 4;
+        if (wsOk) steps++;
+        if (trajOk) steps++;
+        if (ptsOk) steps++;
+        if (liveOk) steps++;
+
+        const pct = Math.round(steps / total * 100);
+        bar.style.width = pct + '%';
+        bar.style.backgroundColor = pct >= 100 ? '#3fb950' : pct >= 50 ? '#d29922' : '#f85149';
+        
+        const labels = [];
+        if (wsOk) labels.push('WS'); else labels.push('WS...');
+        if (trajOk) labels.push('Traj'); else labels.push('Traj...');
+        if (ptsOk) labels.push('Pts'); else labels.push('Pts...');
+        if (liveOk) labels.push('Live'); else labels.push('Live...');
+        text.textContent = labels.join(' | ') + ' ' + pct + '%';
+    }
+
+    async fetchPLYPoints() {
+        try {
+            const resp = await fetch('/api/plypoints');
+            if (!resp.ok) return [];
+            return await resp.json();
+        } catch (e) { return []; }
+    }
+
+    _getCanvasDims(canvas, container) {
+        const key = container.className || container.id || 'default';
+        if (!this.canvasSizes[key] || Date.now() - this.canvasSizes[key].lastUpdate > 5000) {
+            this.canvasSizes[key] = { w: container.clientWidth, h: container.clientHeight, lastUpdate: Date.now() };
         }
+        return this.canvasSizes[key];
     }
 
     hidePlaceholder(panelId) {
-        const panel = document.getElementById(panelId) || document.querySelector(`.${panelId}`);
+        const panel = document.getElementById(panelId) || document.querySelector('.' + panelId);
         if (panel) {
-            const placeholder = panel.querySelector('.placeholder');
-            if (placeholder) {
-                placeholder.classList.add('hidden');
-            }
+            const ph = panel.querySelector('.placeholder');
+            if (ph) ph.classList.add('hidden');
         }
     }
 
     handleMessage(data) {
         if (data.type === 'pong') return;
-
         if (data.type === 'frame_update') {
-            this.updateFrame(data);
+            this.pendingFrame = data;
+        } else if (data.type === 'map_points_update') {
+            this.pendingMapPoints = data;
         }
     }
 
-    updateFrame(data) {
+    _renderFrame(data) {
         this.frameCount++;
-
-        if (data.frame_number !== undefined) {
-            this.frameCount = data.frame_number;
-        }
-        if (data.keyframe_count !== undefined) {
-            this.keyframeCount = data.keyframe_count;
-        }
-        if (data.map_points !== undefined) {
-            this.mapPointCount = data.map_points;
-        }
-
+        if (data.frame_number !== undefined) this.frameCount = data.frame_number;
+        if (data.keyframe_count !== undefined) this.keyframeCount = data.keyframe_count;
+        if (data.map_points !== undefined) this.mapPointCount = data.map_points;
         this.updateUI();
 
+        if (data.pose && this.renderer3D && this.renderer3D.enabled) {
+            this.renderer3D.updateCameraPose(data.pose);
+            this.hidePlaceholder('scene-content');
+        }
+
         if (data.image_base64) {
-            this.drawRGBCanvas(data.image_base64, data.features);
+            this._drawImage(this.rgbImg, 'rgb-canvas', 'rgb-panel',
+                data.image_base64, 'jpeg', data.features, (img) => {
+                    this.hidePlaceholder('rgb-panel');
+                    const infoEl = document.getElementById('rgb-info');
+                    if (infoEl) infoEl.textContent = img.width + 'x' + img.height;
+                    const featEl = document.getElementById('feature-count');
+                    if (featEl) featEl.textContent = data.features ? data.features.length + ' features' : '0 features';
+                });
         }
 
         if (data.mask_base64) {
-            this.drawYOLOCanvas(data.mask_base64, data.dynamic_coverage);
+            this._drawImage(this.yoloImg, 'yolo-canvas', 'yolo-panel',
+                data.mask_base64, 'png', null, (img) => {
+                    this.hidePlaceholder('yolo-panel');
+                });
+        }
+
+        this._updateProgressBar();
+    }
+
+    _renderMapPoints(data) {
+        if (data.map_points_coords && this.renderer3D && this.renderer3D.enabled) {
+            this.renderer3D.updateMapPoints(data.map_points_coords);
+            this.hidePlaceholder('scene-content');
+            const infoEl = document.getElementById('pointcloud-info');
+            if (infoEl && data.map_points_count) {
+                infoEl.textContent = data.map_points_count.toLocaleString() + ' points';
+            }
         }
     }
 
-    drawRGBCanvas(base64, features) {
-        const canvas = document.getElementById('rgb-canvas');
-        const container = document.querySelector('.rgb-panel .image-container');
-        
+    _drawImage(imgEl, canvasId, panelClass, base64, format, features, onDrawn) {
+        const canvas = document.getElementById(canvasId);
+        const container = document.querySelector('.' + panelClass + ' .image-container');
         if (!canvas || !container) return;
 
         const ctx = canvas.getContext('2d');
-        const img = new Image();
-        
-        img.onload = () => {
-            const maxWidth = container.clientWidth;
-            const maxHeight = container.clientHeight;
-            
-            const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
-            const targetWidth = Math.floor(img.width * scale);
-            const targetHeight = Math.floor(img.height * scale);
+        const dims = this._getCanvasDims(canvas, container);
 
-            canvas.width = targetWidth;
-            canvas.height = targetHeight;
-            
-            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        if (canvas.width !== dims.w || canvas.height !== dims.h) {
+            canvas.width = dims.w;
+            canvas.height = dims.h;
+        }
+
+        imgEl.onload = () => {
+            const scale = Math.min(dims.w / imgEl.width, dims.h / imgEl.height);
+            const tw = Math.floor(imgEl.width * scale);
+            const th = Math.floor(imgEl.height * scale);
+            ctx.clearRect(0, 0, dims.w, dims.h);
+            const ox = Math.floor((dims.w - tw) / 2);
+            const oy = Math.floor((dims.h - th) / 2);
+            ctx.drawImage(imgEl, ox, oy, tw, th);
 
             if (features && features.length > 0) {
                 ctx.fillStyle = '#58a6ff';
-                const featureScale = scale;
                 for (const f of features) {
                     ctx.beginPath();
-                    ctx.arc(f.x * featureScale, f.y * featureScale, 3, 0, Math.PI * 2);
+                    ctx.arc(ox + f.x * scale, oy + f.y * scale, 2, 0, Math.PI * 2);
                     ctx.fill();
                 }
             }
-
-            this.hidePlaceholder('rgb-panel');
-            document.getElementById('rgb-info').textContent = `${img.width}×${img.height}`;
-            document.getElementById('feature-count').textContent = features ? `${features.length} features` : '0 features';
+            if (onDrawn) onDrawn(imgEl);
         };
-        
-        img.src = `data:image/jpeg;base64,${base64}`;
-    }
-
-    drawYOLOCanvas(base64, coverage) {
-        const canvas = document.getElementById('yolo-canvas');
-        const container = document.querySelector('.yolo-panel .image-container');
-        
-        if (!canvas || !container) return;
-
-        const ctx = canvas.getContext('2d');
-        const img = new Image();
-        
-        img.onload = () => {
-            const maxWidth = container.clientWidth;
-            const maxHeight = container.clientHeight;
-            
-            const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
-            const targetWidth = Math.floor(img.width * scale);
-            const targetHeight = Math.floor(img.height * scale);
-
-            canvas.width = targetWidth;
-            canvas.height = targetHeight;
-            
-            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
-            ctx.fillStyle = 'rgba(248, 81, 73, 0.3)';
-            ctx.fillRect(0, 0, targetWidth, targetHeight);
-
-            this.hidePlaceholder('yolo-panel');
-            document.getElementById('yolo-class').textContent = 'Class: person';
-            document.getElementById('yolo-coverage').textContent = `Coverage: ${coverage || 0}%`;
-        };
-        
-        img.src = `data:image/png;base64,${base64}`;
+        imgEl.src = 'data:image/' + format + ';base64,' + base64;
     }
 
     updateUI() {
-        document.getElementById('frame-num').textContent = this.frameCount;
-        document.getElementById('kf-num').textContent = this.keyframeCount;
-        document.getElementById('map-pts').textContent = this.mapPointCount.toLocaleString();
+        const fnEl = document.getElementById('frame-num');
+        if (fnEl) fnEl.textContent = this.frameCount;
+        const kfEl = document.getElementById('kf-num');
+        if (kfEl) kfEl.textContent = this.keyframeCount;
+        const mpEl = document.getElementById('map-pts');
+        if (mpEl) mpEl.textContent = this.mapPointCount.toLocaleString();
 
         const statusEl = document.getElementById('slam-status');
-        if (this.frameCount > 0) {
-            statusEl.textContent = 'TRACKING';
-            statusEl.className = 'status-badge tracking';
-        } else if (this.keyframeCount > 0) {
-            statusEl.textContent = 'STATIC';
-            statusEl.className = 'status-badge online';
-        } else {
-            statusEl.textContent = 'INIT';
-            statusEl.className = 'status-badge';
+        if (statusEl) {
+            if (this.frameCount > 0) {
+                statusEl.innerHTML = '<span class="status-dot"></span><span>TRACKING</span>';
+                statusEl.className = 'status-badge tracking';
+            } else if (this.keyframeCount > 0) {
+                statusEl.innerHTML = '<span class="status-dot"></span><span>STATIC</span>';
+                statusEl.className = 'status-badge online';
+            }
         }
     }
 }
 
 window.addEventListener('load', () => {
-    console.log('[DS-SLAM] Initializing visualizer...');
-    window.visualizer = new SlamVisualizer();
-    console.log('[DS-SLAM] Visualizer initialized');
+    try {
+        window.visualizer = new SlamVisualizer();
+    } catch(e) {
+        var errDiv = document.createElement('div');
+        errDiv.style.cssText = 'color:red;padding:20px;font-family:monospace;position:fixed;top:0;left:0;right:0;background:black;z-index:99999;font-size:14px';
+        errDiv.textContent = 'DS-SLAM Init Error: ' + (e.stack || e.message);
+        document.body.appendChild(errDiv);
+    }
 });
 
 window.addEventListener('resize', () => {
-    if (window.visualizer && window.visualizer.renderer3D) {
-        window.visualizer.renderer3D.resize();
+    if (window.visualizer) {
+        window.visualizer.canvasSizes = {};
+        if (window.visualizer.renderer3D) {
+            window.visualizer.renderer3D.resize();
+        }
     }
 });
