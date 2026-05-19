@@ -6,7 +6,7 @@
 
 ---
 
-## ⚡ 当前状态（2026-05-18 更新）
+## ⚡ 当前状态（2026-05-19 18:15 更新）
 
 ### 已完成
 - ✅ M0~M5 全部完成（Windows MinGW 工具链）
@@ -21,13 +21,15 @@
 - ✅ **WSL2 跨平台适配修复**（5个文件已更新，见下方修复记录）
 - ✅ **前后端连接测试通过**（FastAPI 后端运行正常，API + WebSocket 测试通过）
 - ✅ **app_loader.js 问题修复**（WebSocket 路由重复注册根因已修复）
-- ✅ **Git 提交到 GitHub**（最新提交：1ed3181 - WSL2 跨平台适配）
+- ✅ **Git 提交到 GitHub**（最新提交：0c23503 - 阶段 5-6 完成）
+- ✅ **阶段 5 完成**：SLAM 系统测试 + EVO 精度评估
+- ✅ **阶段 6 完成**：GUI 数据集切换功能 + 多数据集支持
 
 ### 代码修复记录（2026-05-18 前后端修复）
 | 文件 | 修复内容 |
 |------|---------|
-| `visualization/frontend/static/js/app_loader.js` | Three.js 渲染器 z-index 修复 + dense_points_update/gridmap_update 消息处理 |
-| `visualization/backend/main.py` | WebSocket 路由重复注册修复 + YOLO 模型路径修复 + 错误处理增强 |
+| `visualization/frontend/static/js/app_loader.js` | Three.js 渲染器 z-index 修复 + dense_points_update/gridmap_update 消息处理 + 数据集选择器交互 |
+| `visualization/backend/main.py` | WebSocket 路由重复注册修复 + YOLO 模型路径修复 + 错误处理增强 + 数据集切换 API + 跨平台路径支持 |
 | `requirements` | websockets 16.0→13.1, starlette 1.0→0.39.2, fastapi 0.136→0.115, uvicorn 0.46→0.29 |
 
 ### 网页效果测试（2026-05-18 22:30）
@@ -35,16 +37,31 @@
 - ✅ 测试帧推送成功（包含图像 + 掩码）
 - ✅ 19 个 WebSocket 客户端连接成功
 - ✅ 4 个面板正常显示：RGB Input、YOLO Segmentation、3D Scene、2D Grid Map
-- ✅ 2 个数据集就绪：fr1_xyz + fr3_walking_xyz
+- ✅ 4 个数据集就绪：fr1_xyz + fr3_walking_xyz + fr3_sitting_static + fr3_walking_halfsphere
+
+### 阶段 5 完成总结（2026-05-19 17:00）
+- ✅ SLAM 基础测试通过（fr1_xyz 静态场景，794帧，837地图点）
+- ✅ 编译产物验证完整（7个库文件和可执行文件）
+- ✅ DS-SLAM 完整功能测试通过（fr3_walking_xyz 动态场景，827帧）
+- ✅ EVO 精度评估完成：
+  - 静态场景 RMSE: 1.06cm
+  - 动态场景 RMSE: 1.58cm
+  - 语义分割有效过滤动态物体
+
+### 阶段 6 完成总结（2026-05-19 18:15）
+- ✅ GUI 数据集切换功能实现（前端选择器 + 后端 API）
+- ✅ 代码推送到 GitHub（tag: milestone-slam-testing）
+- ✅ 4个 TUM 数据集解压就绪
+- ✅ 跨平台路径支持（Windows/WSL2）
 
 ### 待解决
-- ⏳ WSL2 编译 slam-system
-- ⏳ WSL2 测试运行 SLAM 系统
-- 📝 EVO 精度对比测试
+- 📝 运行 fr3_sitting_static 数据集测试
+- 📝 运行 fr3_walking_halfsphere 数据集测试
 - 📝 README 文档完善
+- 📝 WSL2_DEPLOYMENT.md 完善
 
-### 断点记录（2026-05-18 22:30）
-**当前断点：阶段 4 完成 → 准备阶段 5（WSL2 测试运行 SLAM 系统）**
+### 断点记录（2026-05-19 18:15）
+**当前断点：阶段 6 完成 → 准备阶段 7（多数据集测试 + 文档完善）**
 - ✅ Pangolin 已编译安装
 - ✅ ONNX Runtime Linux 已下载（v1.16.3）
 - ✅ ORB-SLAM3 编译完成（100%）

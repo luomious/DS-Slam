@@ -1,14 +1,14 @@
 # DS-SLAM 项目进度跟踪
 
-> 最后更新：2026-05-19 17:00
+> 最后更新：2026-05-19 18:15
 
 ## 📊 当前状态
 
-**最新 Git 提交**: `1ed3181` - feat: WSL2 跨平台适配 - 支持 Ubuntu 22.04 编译运行
-**Git Tag**: `milestone-wsl2-adaptation`
+**最新 Git 提交**: `0c23503` - feat: 阶段 5-6 完成 - SLAM 系统测试、EVO 精度评估、GUI 数据集切换功能
+**Git Tag**: `milestone-slam-testing`
 **远程仓库**: https://github.com/luomious/DS-Slam
 
-**当前阶段**: 阶段 5 完成 → 准备阶段 6（GUI 数据集切换功能 + 文档完善）
+**当前阶段**: 阶段 6 完成 → 准备阶段 7（更多数据集测试 + 文档完善）
 
 ## ✅ 已完成
 
@@ -29,6 +29,9 @@
 | **阶段 5.2 编译产物验证** | ✅ | 所有库文件和可执行文件完整 |
 | **阶段 5.3 DS-SLAM 完整测试** | ✅ | fr3_walking_xyz 动态场景，语义分割正常 |
 | **阶段 5.4 EVO 精度评估** | ✅ | 静态 RMSE 1.06cm，动态 RMSE 1.58cm |
+| **阶段 6.1 GUI 数据集切换** | ✅ | 前端选择器 + 后端 API + 跨平台路径支持 |
+| **阶段 6.2 GitHub 推送** | ✅ | 代码提交 + tag 创建 + 远程推送 |
+| **阶段 6.3 多数据集支持** | ✅ | 4个 TUM 数据集已解压就绪 |
 
 ## 🔧 本次修复记录（2026-05-18）
 
@@ -124,20 +127,20 @@
 
 ## 🎯 下一步计划
 
-### 阶段 6：GUI 数据集切换功能 + 文档完善
+### 阶段 7：多数据集测试 + 文档完善
 
-1. 实现前端数据集切换 UI
-2. 添加更多 TUM 数据集支持
-3. 更新 README.md
+1. 运行 fr3_sitting_static 数据集测试
+2. 运行 fr3_walking_halfsphere 数据集测试
+3. 更新 README.md（添加数据集说明）
 4. 完善 WSL2_DEPLOYMENT.md
 5. 提交最终版本
 
-### 阶段 5 完成总结（已完成）
+### 阶段 6 完成总结（已完成）
 
-✅ **阶段 5.1**：SLAM 基础测试通过（fr1_xyz 静态场景）
-✅ **阶段 5.2**：所有编译产物验证完整
-✅ **阶段 5.3**：DS-SLAM 完整功能测试通过（fr3_walking_xyz 动态场景）
-✅ **阶段 5.4**：EVO 精度评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
+✅ **阶段 6.1**：GUI 数据集切换功能实现（前端选择器 + 后端 API）
+✅ **阶段 6.2**：代码推送到 GitHub（tag: milestone-slam-testing）
+✅ **阶段 6.3**：4个 TUM 数据集解压就绪
+✅ **阶段 6.4**：文档完善中
 
 ## 📁 重要文件位置
 
@@ -187,30 +190,43 @@ cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
 4. **ONNX Runtime Linux 已下载到** `libs/onnxruntime-linux/`
 5. **Pangolin 已编译安装到** `/usr/local/`
 
-## 🔴 断点记录（2026-05-19 17:00）
+## 🔴 断点记录（2026-05-19 18:15）
 
-**当前断点：阶段 5 完成 → 准备阶段 6（GUI 数据集切换功能 + 文档完善）**
+**当前断点：阶段 6 完成 → 准备阶段 7（多数据集测试 + 文档完善）**
 
 ### 已完成
 - ✅ Pangolin 编译安装（依赖：libboost, libcurl, libepoxy 等）
 - ✅ ONNX Runtime Linux v1.16.3 下载完成（`libs/onnxruntime-linux/`）
 - ✅ ORB-SLAM3 编译完成（100%，生成 `libORB_SLAM3.a` + `rgbd_tum`）
 - ✅ slam-system 编译完成（100%，生成 3 个库文件 + test_segmentator）
-- ✅ 数据集就绪（fr1_xyz + fr3_walking_xyz）
+- ✅ 4个 TUM 数据集已解压就绪：
+  - fr1_xyz（静态场景，794帧）
+  - fr3_walking_xyz（动态场景，827帧）
+  - fr3_sitting_static（静态场景）
+  - fr3_walking_halfsphere（动态场景）
 - ✅ SLAM 系统运行测试通过（两个数据集）
 - ✅ EVO 精度评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 - ✅ 前后端测试通过（API + WebSocket）
 - ✅ 网页效果测试通过（19个WebSocket客户端连接）
+- ✅ GUI 数据集切换功能实现（前端选择器 + 后端 API）
+- ✅ 跨平台路径支持（Windows/WSL2）
 - ✅ 轨迹文件生成（CameraTrajectory.txt + KeyFrameTrajectory.txt）
 - ✅ 静态稠密地图生成（static_map.ply + grid_map.png）
+- ✅ 代码推送到 GitHub（tag: milestone-slam-testing）
 
 ### 下一步执行
 ```bash
-# 1. 实现前端数据集切换 UI
-# 2. 添加更多 TUM 数据集支持
-# 3. 更新 README.md
-# 4. 完善 WSL2_DEPLOYMENT.md
-# 5. 提交最终版本到 GitHub
+# 1. 运行 fr3_sitting_static 数据集测试
+wsl -d Ubuntu-22.04 bash -c "cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D && ./rgbd_tum ../../Vocabulary/ORBvoc.txt TUM3.yaml /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_sitting_static /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_sitting_static/associations.txt"
+
+# 2. 运行 fr3_walking_halfsphere 数据集测试
+wsl -d Ubuntu-22.04 bash -c "cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D && ./rgbd_tum ../../Vocabulary/ORBvoc.txt TUM3.yaml /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_walking_halfsphere /mnt/e/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_walking_halfsphere/associations.txt"
+
+# 3. 启动可视化后端（Windows 端）
+e:\VSCode\VSCode-Workspace\DS-Slam\.venv\Scripts\python.exe e:\VSCode\VSCode-Workspace\DS-Slam\visualization\backend\main.py
+
+# 4. 访问前端查看实时数据
+# http://localhost:8000/
 ```
 
 ### 数据集位置
