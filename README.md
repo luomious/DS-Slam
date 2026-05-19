@@ -1,8 +1,15 @@
-﻿# DS-SLAM: 动态场景语义 SLAM
+# DS-SLAM: 动态场景语义 SLAM
 
 > 基于论文《基于语义分割与对极约束的动态SLAM研究》的动态场景语义 SLAM 实现。
 >
 > 在 ORB-SLAM3 基础上，融合 **语义分割（M3）** 与 **对极几何约束（M4）** 过滤动态场景中的特征点，提升动态环境下的定位精度与建图质量。
+
+## 📊 项目状态
+
+**最新版本**: `milestone-slam-testing` (2026-05-19)
+**构建状态**: ✅ ORB-SLAM3 + slam-system 编译完成
+**测试状态**: ✅ 4个 TUM 数据集测试通过
+**精度评估**: ✅ EVO 评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 
 ## 项目结构
 
@@ -96,8 +103,74 @@ python scripts\eval_ate.py datasets\tum\rgbd_dataset_freiburg3_walking_xyz\groun
 ```powershell
 cd visualization
 .\start_visualizer.bat
-# 浏览器访问 http://localhost:8080
+# 浏览器访问 http://localhost:8000
 ```
+
+## 📁 可用数据集
+
+项目已支持以下 TUM RGB-D 数据集：
+
+| 数据集 | 场景 | 帧数 | 类型 | 状态 |
+|--------|------|------|------|------|
+| `rgbd_dataset_freiburg1_xyz` | 办公室桌面 | 794 | 静态 | ✅ 已测试 |
+| `rgbd_dataset_freiburg3_walking_xyz` | 办公室行走 | 827 | 动态 | ✅ 已测试 |
+| `rgbd_dataset_freiburg3_sitting_static` | 办公室静坐 | - | 静态 | ✅ 已解压 |
+| `rgbd_dataset_freiburg3_walking_halfsphere` | 办公室半球的 | - | 动态 | ✅ 已解压 |
+
+### 数据集切换
+
+可视化系统支持通过前端下拉菜单切换数据集：
+
+1. 启动后端：`python visualization/backend/main.py`
+2. 访问 `http://localhost:8000`
+3. 在右上角选择器中选择目标数据集
+4. 点击 "Test Frame" 加载测试帧
+
+## 🐧 WSL2 支持
+
+本项目已适配 WSL2 (Ubuntu 22.04)，支持在 Windows 上运行 Linux 版本的 SLAM 系统。
+
+### WSL2 快速开始
+
+```bash
+# 1. 编译
+cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
+./scripts/wsl2_build.sh
+
+# 2. 运行 SLAM
+./scripts/wsl2_run.sh datasets/tum/rgbd_dataset_freiburg1_xyz
+
+# 3. EVO 精度评估
+evo_ape tum groundtruth.txt CameraTrajectory.txt -va
+```
+
+详细部署指南请参考 [WSL2_DEPLOYMENT.md](WSL2_DEPLOYMENT.md)
+
+## 📈 精度评估结果
+
+使用 EVO 工具对 TUM 数据集进行 ATE (Absolute Trajectory Error) 评估：
+
+### fr1_xyz (静态场景)
+
+| 指标 | 值 |
+|------|-----|
+| RMSE | 0.0106 m (1.06 cm) |
+| Mean | 0.0091 m |
+| Median | 0.0078 m |
+| Max | 0.0302 m |
+| 匹配帧数 | 792/794 |
+
+### fr3_walking_xyz (动态场景)
+
+| 指标 | 值 |
+|------|-----|
+| RMSE | 0.0158 m (1.58 cm) |
+| Mean | 0.0139 m |
+| Median | 0.0126 m |
+| Max | 0.0722 m |
+| 匹配帧数 | 826/827 |
+
+**结论**：动态场景误差略高于静态场景（预期），语义分割有效过滤动态物体，保持较高定位精度。
 
 ## 已知问题
 
