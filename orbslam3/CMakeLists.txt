@@ -67,6 +67,8 @@ message(STATUS "Eigen3 found at: ${EIGEN3_INCLUDE_DIR}")
 set(EIGEN3_VERSION 5.0.1)
 
 # Pangolin - skip if not found (optional)
+# FORCE DISABLE for headless WSL2 testing
+set(Pangolin_FOUND FALSE)
 find_package(Pangolin QUIET)
 if(NOT Pangolin_FOUND)
     message(STATUS "Pangolin not found - disabling visualization")

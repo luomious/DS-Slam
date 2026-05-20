@@ -105,6 +105,20 @@ size_t SlamVisualizer::getQueueSize() const {
 
 void SlamVisualizer::senderThreadFunc() {
     while (!m_stop.load()) {
+        // If auto-disabled, drain queue without sending
+        if (m_disabled.load()) {
+            std::unique_lock<std::mutex> lock(m_queueMutex);
+            // Drain the queue silently
+            while (!m_queue.empty()) {
+                m_queue.pop();
+            }
+            // Wait for stop signal
+            m_cv.wait(lock, [this] {
+                return m_stop.load();
+            });
+            break;
+        }
+
         FrameData frame;
         
         // Wait for data or stop signal
@@ -130,7 +144,18 @@ void SlamVisualizer::senderThreadFunc() {
         // Build JSON and send (outside lock)
         std::string json = buildJsonFromFrame(frame);
         if (!json.empty()) {
-            sendHTTPPost(json);
+            bool ok = sendHTTPPost(json);
+            if (ok) {
+                m_consecutiveFailures.store(0);
+            } else {
+                int fails = m_consecutiveFailures.fetch_add(1) + 1;
+                if (fails >= MAX_CONSECUTIVE_FAILURES) {
+                    m_disabled.store(true);
+                    std::cerr << "[Vis] Auto-disabled after " << fails << " consecutive POST failures."
+                              << " Start the backend or this will stay disabled." << std::endl;
+                    continue;  // Will drain and stop next iteration
+                }
+            }
         }
     }
 }
@@ -262,6 +287,19 @@ std::string SlamVisualizer::buildJsonFromFrame(const FrameData& frame) const {
         return jsonStream.str();
     }
     
+    // Map points update message
+    if (frame.type == "map_points_update") {
+        jsonStream << "{\"type\":\"map_points_update\",";
+        jsonStream << "\"map_points_count\":" << (frame.mapPointsCoords.size() / 3) << ",";
+        jsonStream << "\"map_points_coords\":[";
+        for (size_t i = 0; i < frame.mapPointsCoords.size(); i++) {
+            if (i > 0) jsonStream << ",";
+            jsonStream << std::fixed << std::setprecision(4) << frame.mapPointsCoords[i];
+        }
+        jsonStream << "]}";
+        return jsonStream.str();
+    }
+    
     // Frame update message
     jsonStream << "{\"type\":\"frame_update\",";
     
@@ -322,6 +360,48 @@ std::string SlamVisualizer::buildJsonFromFrame(const FrameData& frame) const {
     
     jsonStream << "}";
     return jsonStream.str();
+}
+
+
+// ============================================================================
+// Send Map Points
+// ============================================================================
+
+void SlamVisualizer::SendMapPoints(const std::vector<float>& coords) {
+    if (coords.empty() || coords.size() < 3) {
+        return;
+    }
+    
+    if (!m_running.load()) {
+        start();
+    }
+    
+    FrameData frame;
+    frame.type = "map_points_update";
+    frame.mapPointsCoords = coords;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        if (m_queue.size() >= 30) {
+            std::queue<FrameData> newQueue;
+            bool dropped = false;
+            while (!m_queue.empty()) {
+                FrameData f = m_queue.front();
+                m_queue.pop();
+                if (!dropped && f.type == "map_points_update") {
+                    dropped = true;
+                    continue;
+                }
+                newQueue.push(f);
+            }
+            m_queue = newQueue;
+        }
+        m_queue.push(frame);
+    }
+    m_cv.notify_one();
+    static int smp_log_count = 0;
+    if (++smp_log_count <= 2 || smp_log_count % 50 == 0)
+        std::cerr << "[Vis] SendMapPoints queued: " << coords.size()/3 << " pts, q=" << m_queue.size() << std::endl;
 }
 
 // ============================================================================
@@ -418,6 +498,13 @@ bool SlamVisualizer::sendHTTPPost(const std::string& jsonData) const {
         return false;
     }
 
+    // Set timeouts to match curl path (200ms connect, 500ms total)
+    DWORD connectTimeout = 200;
+    DWORD sendRecvTimeout = 500;
+    WinHttpSetOption(hRequest, WINHTTP_OPTION_CONNECT_TIMEOUT, &connectTimeout, sizeof(connectTimeout));
+    WinHttpSetOption(hRequest, WINHTTP_OPTION_SEND_TIMEOUT, &sendRecvTimeout, sizeof(sendRecvTimeout));
+    WinHttpSetOption(hRequest, WINHTTP_OPTION_RECEIVE_TIMEOUT, &sendRecvTimeout, sizeof(sendRecvTimeout));
+
     std::wstring contentType = L"Content-Type: application/json";
     WinHttpAddRequestHeaders(hRequest, contentType.c_str(), -1, WINHTTP_ADDREQ_FLAG_ADD);
 
@@ -460,10 +547,18 @@ bool SlamVisualizer::sendHTTPPost(const std::string& jsonData) const {
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonData.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, jsonData.size());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 1000L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 500L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 200L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
 
     CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        static int curl_fail_count = 0;
+        int fc = ++curl_fail_count;
+        if (fc <= 2 || fc == MAX_CONSECUTIVE_FAILURES) {
+            std::cerr << "[Vis] curl error (" << fc << "): " << curl_easy_strerror(res) << std::endl;
+        }
+    }
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);

@@ -27,6 +27,9 @@ struct FrameData {
     
     std::vector<cv::KeyPoint> features;
     
+    // Map point world coordinates (x,y,z triples)
+    std::vector<float> mapPointsCoords;  // up to ~500 points * 3 floats
+
     // JSON type indicator
     std::string type;  // "frame_update" or "trajectory_update"
     std::vector<float> trajectoryData;  // for trajectory_update
@@ -62,6 +65,9 @@ public:
 
     void pushTrajectoryUpdate(const std::vector<float>& trajectoryData);
 
+    // Send map point coordinates (called periodically)
+    void SendMapPoints(const std::vector<float>& coords);
+
     // Get queue size for monitoring
     size_t getQueueSize() const;
 
@@ -80,6 +86,11 @@ private:
     std::queue<FrameData> m_queue;
     std::mutex m_queueMutex;
     std::condition_variable m_cv;
+
+    // Auto-disable on consecutive POST failures
+    static constexpr int MAX_CONSECUTIVE_FAILURES = 5;
+    mutable std::atomic<int> m_consecutiveFailures{0};
+    mutable std::atomic<bool> m_disabled{false};
 
     // Methods
     void parseUrl(const std::string& url);

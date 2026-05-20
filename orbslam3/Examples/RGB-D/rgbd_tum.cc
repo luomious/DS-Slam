@@ -61,9 +61,25 @@ int main(int argc, char **argv)
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::RGBD,true);
 
-    // DS-SLAM M3: load segmentation model if provided
-    if (argc >= 6)
+#ifndef DS_SLAM_DISABLED
+    // DS-SLAM M3: load segmentation model
+    // Priority: 1) CLI argument  2) Derive from executable path  3) YAML default
+    if (argc >= 6) {
         SLAM.InitSegmentator(argv[5]);
+    } else {
+        // Derive absolute path from executable location (argv[0])
+        // rgbd_tum is at orbslam3/Examples/RGB-D/rgbd_tum
+        // model is at segmentation/onnx/yolo11n_seg_v2.onnx (relative to project root)
+        std::string exePath(argv[0]);
+        size_t lastSlash = exePath.find_last_of("/\\");
+        std::string exeDir = (lastSlash != std::string::npos) ? exePath.substr(0, lastSlash) : ".";
+        std::string modelPath = exeDir + "/../../../segmentation/onnx/yolo11n_seg_v2.onnx";
+        SLAM.InitSegmentator(modelPath);
+    }
+#endif
+
+    // DS-SLAM M6: initialize visualizer
+    SLAM.InitVisualizer();
 
     float imageScale = SLAM.GetImageScale();
 
@@ -145,7 +161,17 @@ int main(int argc, char **argv)
 
     // Save camera trajectory
     SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");   
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+
+#ifndef DS_SLAM_DISABLED
+    // DS-SLAM M5: save static map
+    SLAM.SaveStaticMap("output/maps/static_map.ply", "output/maps/grid_map.png");
+#endif
+
+    // DS-SLAM M6: stop visualizer
+    if (SLAM.GetVisualizer()) {
+        SLAM.GetVisualizer()->stop();
+    }
 
     return 0;
 }

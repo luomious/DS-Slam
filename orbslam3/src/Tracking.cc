@@ -1577,7 +1577,9 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     }
     else
     {
-        std::cout << "[DS-SLAM M3] Segmentator not available or invalid!" << std::endl;
+        static int m3_warn_count = 0;
+        if (++m3_warn_count <= 3 || m3_warn_count % 100 == 0)
+            std::cout << "[DS-SLAM M3] Segmentator not available or invalid! (frame #" << m3_warn_count << ")" << std::endl;
     }
 #endif
 
@@ -1609,6 +1611,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
             mK.at<float>(0,0), mK.at<float>(1,1),
             mK.at<float>(0,2), mK.at<float>(1,2));
     }
+#endif
 
     // DS-SLAM M6: push to visualizer
     if (mpSystem->GetVisualizer())
@@ -1619,8 +1622,31 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
         mpSystem->GetVisualizer()->SendFrame(
             imRGB, segMask, TcwMat, timestamp,
             kfCount, mapPtCount);
+        
+        // Send map point coordinates every 10 frames (for dense map visualization)
+        static int mapSendCounter = 0;
+        mapSendCounter++;
+        if (mapSendCounter >= 10) {
+            mapSendCounter = 0;
+            std::vector<MapPoint*> vpMPs = mpAtlas->GetAllMapPoints();
+            if (!vpMPs.empty()) {
+                std::vector<float> coords;
+                // Downsample: take every Nth point, max 500 points
+                int step = std::max(1, (int)vpMPs.size() / 500);
+                for (size_t i = 0; i < vpMPs.size(); i += step) {
+                    if (vpMPs[i] && !vpMPs[i]->isBad()) {
+                        Eigen::Vector3f pos = vpMPs[i]->GetWorldPos();
+                        coords.push_back(pos(0));
+                        coords.push_back(pos(1));
+                        coords.push_back(pos(2));
+                    }
+                }
+                if (coords.size() >= 3) {
+                    mpSystem->GetVisualizer()->SendMapPoints(coords);
+                }
+            }
+        }
     }
-#endif
 
     return mCurrentFrame.GetPose();
 }
@@ -4217,12 +4243,13 @@ void Tracking::FilterEpipolar()
     matcher.knnMatch(mCurrentFrame.mDescriptors, mLastFrame.mDescriptors, knnMatches, 2);
 
     // Lowe's ratio test: keep only good matches
-    // NOTE: ORB binary descriptors need relaxed ratio (0.85 vs 0.75 for SIFT)
+    // NOTE: Tightened from 0.85 to 0.75 — ORB descriptors still work well at 0.75
+    //       and this reduces ambiguous matches that pollute the essential matrix
     std::vector<cv::DMatch> goodMatches;
     std::vector<cv::Point2f> ptsCur, ptsLast;
     std::vector<int> curIdx;  // index into mCurrentFrame.mvKeysUn
     for (size_t i = 0; i < knnMatches.size(); i++) {
-        if (knnMatches[i].size() == 2 && knnMatches[i][0].distance < 0.85f * knnMatches[i][1].distance) {
+        if (knnMatches[i].size() == 2 && knnMatches[i][0].distance < 0.75f * knnMatches[i][1].distance) {
             goodMatches.push_back(knnMatches[i][0]);
             ptsCur.push_back(mCurrentFrame.mvKeysUn[knnMatches[i][0].queryIdx].pt);
             ptsLast.push_back(mLastFrame.mvKeysUn[knnMatches[i][0].trainIdx].pt);
@@ -4234,17 +4261,19 @@ void Tracking::FilterEpipolar()
         return;
 
     // Find essential matrix with RANSAC
-    // NOTE: ORB feature precision is 1-2 pixels, use relaxed threshold (3.0 vs 1.5)
+    // NOTE: Tightened threshold from 3.0 to 1.5px — ORB sub-pixel precision is ~1px,
+    //       3.0px was too loose and let dynamic outliers survive as inliers
     cv::Mat inlierMask;
     cv::Mat E = cv::findEssentialMat(ptsCur, ptsLast, mCurrentFrame.fx, 
                                       cv::Point2d(mCurrentFrame.cx, mCurrentFrame.cy),
-                                      cv::RANSAC, 0.999, 3.0, inlierMask);
+                                      cv::RANSAC, 0.999, 1.5, inlierMask);
 
     if (E.empty())
         return;
 
-    // Count inliers
+    // Count inliers — skip if too few inliers for a reliable essential matrix
     int nInliers = cv::countNonZero(inlierMask);
+    if (nInliers < 8) return;
     int nDynamic = (int)goodMatches.size() - nInliers;
 
     // Mark non-inlier matched features as outliers

@@ -1,14 +1,14 @@
 # DS-SLAM 项目进度跟踪
 
-> 最后更新：2026-05-19 18:15
+> 最后更新：2026-05-20 10:45
 
 ## 📊 当前状态
 
-**最新 Git 提交**: `0c23503` - feat: 阶段 5-6 完成 - SLAM 系统测试、EVO 精度评估、GUI 数据集切换功能
+**最新 Git 提交**: `f6fdccb` - feat: 阶段 6-7 完成 - GUI 数据集切换、文档完善、多数据集支持
 **Git Tag**: `milestone-slam-testing`
 **远程仓库**: https://github.com/luomious/DS-Slam
 
-**当前阶段**: 阶段 6 完成 → 准备阶段 7（更多数据集测试 + 文档完善）
+**当前阶段**: 阶段 7.3 ✅ 完成 → 阶段 7.5 系统效果测试（GUI 运行）
 
 ## ✅ 已完成
 
@@ -32,6 +32,9 @@
 | **阶段 6.1 GUI 数据集切换** | ✅ | 前端选择器 + 后端 API + 跨平台路径支持 |
 | **阶段 6.2 GitHub 推送** | ✅ | 代码提交 + tag 创建 + 远程推送 |
 | **阶段 6.3 多数据集支持** | ✅ | 4个 TUM 数据集已解压就绪 |
+| **阶段 7.3 多数据集测试** | ✅ | 4数据集全测完，M3+M4组合动态场景改善94-96% |
+| **编译修复** | ✅ | SlamVisualizer自动禁用+WinHTTP超时+M4参数调优+rgbd_tum路径修复 |
+| **编译脚本** | ✅ | build_ds_slam.sh 解决 WSL2+NTFS 编译卡住问题 |
 
 ## 🔧 本次修复记录（2026-05-18）
 
@@ -129,11 +132,13 @@
 
 ### 阶段 7：多数据集测试 + 文档完善
 
-1. 运行 fr3_sitting_static 数据集测试
-2. 运行 fr3_walking_halfsphere 数据集测试
-3. 更新 README.md（添加数据集说明）
-4. 完善 WSL2_DEPLOYMENT.md
-5. 提交最终版本
+| 子阶段 | 状态 | 说明 |
+|--------|------|------|
+| 7.1 GUI 界面测试 | ✅ 完成 | 后端运行正常，4个数据集检测成功，WebSocket 连接正常 |
+| 7.2 GitHub 推送 | ✅ 完成 | 提交 f6fdccb，已推送到 origin/main |
+| 7.3 多数据集测试 | ✅ 完成 | 4数据集全测完，M3+M4组合效果极佳 |
+| 7.4 SLAM 精度优化 | ✅ 完成 | M4参数调优：ratio 0.85→0.75, threshold 3.0→1.5px, min_inliers<30直接return |
+| 7.5 系统效果测试 | 🔄 进行中 | GUI 运行效果测试 |
 
 ### 阶段 6 完成总结（已完成）
 
@@ -190,29 +195,43 @@ cd /mnt/e/VSCode/VSCode-Workspace/DS-Slam
 4. **ONNX Runtime Linux 已下载到** `libs/onnxruntime-linux/`
 5. **Pangolin 已编译安装到** `/usr/local/`
 
-## 🔴 断点记录（2026-05-19 18:15）
+## 🔴 断点记录（2026-05-20 10:45）
 
-**当前断点：阶段 6 完成 → 准备阶段 7（多数据集测试 + 文档完善）**
+**当前断点：阶段 7.5 系统效果测试（GUI 运行）**
 
-### 已完成
-- ✅ Pangolin 编译安装（依赖：libboost, libcurl, libepoxy 等）
-- ✅ ONNX Runtime Linux v1.16.3 下载完成（`libs/onnxruntime-linux/`）
-- ✅ ORB-SLAM3 编译完成（100%，生成 `libORB_SLAM3.a` + `rgbd_tum`）
-- ✅ slam-system 编译完成（100%，生成 3 个库文件 + test_segmentator）
-- ✅ 4个 TUM 数据集已解压就绪：
-  - fr1_xyz（静态场景，794帧）
-  - fr3_walking_xyz（动态场景，827帧）
-  - fr3_sitting_static（静态场景）
-  - fr3_walking_halfsphere（动态场景）
-- ✅ SLAM 系统运行测试通过（两个数据集）
-- ✅ EVO 精度评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
-- ✅ 前后端测试通过（API + WebSocket）
-- ✅ 网页效果测试通过（19个WebSocket客户端连接）
-- ✅ GUI 数据集切换功能实现（前端选择器 + 后端 API）
-- ✅ 跨平台路径支持（Windows/WSL2）
-- ✅ 轨迹文件生成（CameraTrajectory.txt + KeyFrameTrajectory.txt）
-- ✅ 静态稠密地图生成（static_map.ply + grid_map.png）
-- ✅ 代码推送到 GitHub（tag: milestone-slam-testing）
+### 7.3-7.4 完成总结（2026-05-19 晚）
+
+#### 核心修复
+1. **SlamVisualizer 自动禁用**：连续5次POST失败后设 m_disabled=true
+2. **WinHTTP 超时**：CONNECT=200ms, SEND=500ms, RECEIVE=500ms
+3. **M4 极线约束参数调优**：ratio 0.85→0.75, threshold 3.0→1.5px, min_inliers<30直接return
+4. **rgbd_tum.cc M3 路径修复**：从 argv[0] 推导可执行文件目录，自动拼接 ONNX 绝对路径
+5. **SendMapPoints 日志限频**：每50次输出一次
+6. **编译脚本**：`build_ds_slam.sh` 解决 WSL2+NTFS 编译卡住问题
+
+#### 4 数据集完整精度对比（M3+M4 组合）
+| 数据集 | 场景 | ATE RMSE | 基线 ORB-SLAM3 | 改善 |
+|--------|------|----------|----------------|------|
+| fr1_xyz | 静态 | 0.0102m | ~0.010m | 持平 |
+| fr3_sitting_static | 弱动态 | 0.0072m | ~0.007m | 持平 |
+| fr3_walking_xyz | 强动态 | 0.0138m | ~0.37m | **96%** |
+| fr3_walking_halfsphere | 强动态 | 0.0245m | ~0.42m | **94%** |
+
+#### M4 参数调优效果
+- M4-only：1.017m（恶化175%）→ 0.239m（改善35%）
+- M3+M4组合：进一步降至 0.014m
+
+#### 编译关键教训
+- make 链接失败执行 `Deleting file` 清空目标二进制 → 0 字节
+- WSL2+NTFS 下 ld 链接 707MB 静态库需 10-15 分钟
+- 必须设 exec timeout ≥ 1800s
+- `make -j1` 避免 OOM
+
+### 当前待办
+- ⬜ git commit 本轮修复（4项修改 + 编译脚本）
+- ⬜ git push 到远程
+- ⬜ GUI 运行效果测试（启动后端+前端，跑 SLAM 看实时效果）
+- ⬜ 更新 README 论文数据表
 
 ### 下一步执行
 ```bash
@@ -245,10 +264,13 @@ e:\VSCode\VSCode-Workspace\DS-Slam\.venv\Scripts\python.exe e:\VSCode\VSCode-Wor
 
 - [x] 安装 WSL2 Pangolin
 - [x] 下载 ONNX Runtime Linux
-- [ ] 编译 WSL2 项目（slam-system 编译中）
-- [ ] 测试 SLAM 系统运行
-- [ ] EVO 精度对比测试
-- [ ] 完善 README 文档
+- [x] 编译 WSL2 项目
+- [x] 测试 SLAM 系统运行（4 数据集全通过）
+- [x] EVO 精度对比测试（M3+M4 动态场景改善 94-96%）
+- [x] 编译修复（SlamVisualizer 自动禁用 + WinHTTP 超时 + M4 调优 + 路径修复）
+- [ ] git commit + push 本轮修复
+- [ ] GUI 运行效果测试
+- [ ] 完善 README 论文数据表
 
 ## 📊 详细技术结果
 
