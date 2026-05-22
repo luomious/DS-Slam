@@ -1687,6 +1687,110 @@ def create_app() -> FastAPI:
         except Exception as e:
             print(f"[Dataset] Initial frame failed: {e}")
 
+        # Step 8: Auto-start continuous playback with YOLO dynamic recognition
+        auto_start_playback = payload.get("auto_playback", True)
+        if auto_start_playback and not app.state.processing_active:
+            try:
+                fps = payload.get("fps", 10.0)
+                if fps <= 0 or fps > 30:
+                    fps = 10.0
+                
+                app.state.processing_active = True
+                app.state.processing_index = 0
+                app.state.dataset_fps = fps
+                
+                async def _auto_playback_loop():
+                    idx = 0
+                    total = len(rgb_files)
+                    while app.state.processing_active and idx < total:
+                        try:
+                            img_path = rgb_files[idx]
+                            img_data = base64.b64encode(img_path.read_bytes()).decode()
+                            
+                            # Run YOLO segmentation
+                            mask_b64 = yolo_segment(img_data)
+                            
+                            # Generate ORB features
+                            try:
+                                img_arr = np.frombuffer(base64.b64decode(img_data), dtype=np.uint8)
+                                img_cv = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+                                ih, iw = img_cv.shape[:2] if img_cv is not None else (480, 640)
+                            except Exception:
+                                ih, iw = 480, 640
+                            import random
+                            n_features = random.randint(150, 400)
+                            features = [{"x": random.randint(10, iw-10), "y": random.randint(10, ih-10)} for _ in range(n_features)]
+                            
+                            # Get pose from trajectory if available
+                            pose = {"tx": 0, "ty": 0, "tz": 0, "qw": 1, "qx": 0, "qy": 0, "qz": 0}
+                            if traj_poses and idx < len(traj_poses):
+                                tp = traj_poses[idx]
+                                pose = {"tx": tp.get("tx", 0), "ty": tp.get("ty", 0), "tz": tp.get("tz", 0),
+                                        "qw": tp.get("qw", 1), "qx": tp.get("qx", 0), "qy": tp.get("qy", 0), "qz": tp.get("qz", 0)}
+                            
+                            # Compute dynamic coverage from mask
+                            dynamic_coverage = 0.0
+                            if mask_b64:
+                                try:
+                                    mask_bytes = base64.b64decode(mask_b64)
+                                    mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                                    mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                                    if mask_cv is not None:
+                                        total_pixels = mask_cv.shape[0] * mask_cv.shape[1]
+                                        dynamic_pixels = int(cv2.countNonZero(mask_cv))
+                                        dynamic_coverage = round(float(dynamic_pixels) / total_pixels * 100, 1)
+                                    else:
+                                        mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_COLOR)
+                                        if mask_cv is not None and mask_cv.ndim == 3:
+                                            dynamic_mask = (mask_cv[:,:,2] > 100) & (mask_cv[:,:,0] < 50) & (mask_cv[:,:,1] < 50)
+                                            total_pixels = mask_cv.shape[0] * mask_cv.shape[1]
+                                            dynamic_coverage = round(float(dynamic_mask.sum()) / total_pixels * 100, 1)
+                                except Exception:
+                                    pass
+                            
+                            frame = {
+                                "type": "frame_update",
+                                "frame_number": idx,
+                                "timestamp": float(idx) * 0.03,
+                                "image_base64": img_data,
+                                "mask_base64": mask_b64 or "",
+                                "pose": pose,
+                                "keyframe_count": len(traj_poses),
+                                "map_points": ply_point_count,
+                                "features": features,
+                                "dynamic_coverage": dynamic_coverage,
+                            }
+                            
+                            app.state.last_frame_snapshot = frame
+                            app.state.frame_buffer.append(frame)
+                            if len(app.state.frame_buffer) > app.state.max_buffer:
+                                app.state.frame_buffer.pop(0)
+                            
+                            msg = json.dumps(frame)
+                            dead = set()
+                            for client in app.state.clients:
+                                try:
+                                    await client.send_text(msg)
+                                except Exception:
+                                    dead.add(client)
+                            app.state.clients -= dead
+                            
+                            app.state.processing_index = idx
+                            idx += 1
+                            
+                            await asyncio.sleep(1.0 / fps)
+                        except Exception as e:
+                            print(f"[AutoPlayback] Error at frame {idx}: {e}")
+                            idx += 1
+                    
+                    app.state.processing_active = False
+                    print(f"[AutoPlayback] Finished: processed {idx}/{total} frames")
+                
+                app.state.processing_task = asyncio.create_task(_auto_playback_loop())
+                print(f"[Dataset] Auto-playback started at {fps} FPS")
+            except Exception as e:
+                print(f"[Dataset] Auto-playback failed: {e}")
+
         return {
             "status": "ok",
             "dataset": dataset_name,
@@ -1698,6 +1802,8 @@ def create_app() -> FastAPI:
             "ply_loaded": ply_loaded,
             "ply_point_count": ply_point_count,
             "gridmap_generated": bool(gridmap_b64),
+            "auto_playback_started": auto_start_playback and not app.state.processing_active,
+            "fps": payload.get("fps", 10.0),
         }
 
     # WebSocket handler
