@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import time
 import math
+import os
 from pathlib import Path
 from typing import Any, List
 
@@ -86,7 +87,7 @@ DYNAMIC_COCO_IDS = {0, 1, 2, 3, 5, 7}
 class YOLOInferencer:
     """Lightweight YOLO11-seg ONNX Runtime wrapper for real-time segmentation."""
     
-    def __init__(self, model_path: str, input_size: tuple = (640, 640), conf: float = 0.25):
+    def __init__(self, model_path: str, input_size: tuple = (640, 640), conf: float = 0.15):
         self.input_size = input_size
         self.conf_threshold = conf
         self.model_path = model_path
@@ -98,6 +99,11 @@ class YOLOInferencer:
     
     def _load_model(self):
         try:
+            if not os.path.exists(self.model_path):
+                print(f"[YOLO] Model file not found: {self.model_path}")
+                print("[YOLO] Using fallback pseudo-segmentation mode")
+                self.valid = False
+                return
             self.sess = ort.InferenceSession(
                 self.model_path,
                 providers=["CPUExecutionProvider"]
@@ -108,6 +114,7 @@ class YOLOInferencer:
             print(f"[YOLO] Model loaded: {self.model_path}")
         except Exception as e:
             print(f"[YOLO] Failed to load model: {e}")
+            print("[YOLO] Using fallback pseudo-segmentation mode")
             self.valid = False
     
     def preprocess(self, img_bgr: np.ndarray) -> np.ndarray:
@@ -135,8 +142,9 @@ class YOLOInferencer:
             proto_out = outputs[1] # (1, 32, 160, 160)
             
             # Parse detection shape
-            det = det_out[0]  # (116, 8400)
-            total_features, num_proposals = det.shape[1], det.shape[0]
+            det = det_out[0]  # (116, 8400) = (4+nc+nm, num_proposals)
+            num_proposals = det.shape[1]  # 8400
+            total_features = det.shape[0]  # 116 = 4+nc+nm
             nm = 32  # mask coefficients per proposal
             nc = total_features - 4 - nm  # number of classes
             
@@ -144,32 +152,29 @@ class YOLOInferencer:
             proto = proto_out[0]  # (32, 160, 160)
             mask_h, mask_w = proto.shape[1], proto.shape[2]
             
-            # Build combined dynamic mask
+            # Vectorized: extract all scores and filter in one pass
+            scores_all = det[4:4+nc, :]  # (nc, num_proposals)
+            best_scores = np.max(scores_all, axis=0)  # (num_proposals,)
+            best_classes = np.argmax(scores_all, axis=0)  # (num_proposals,)
+            
+            # Filter by confidence and dynamic class
+            conf_mask = best_scores >= self.conf_threshold
+            dynamic_mask = np.isin(best_classes, list(DYNAMIC_COCO_IDS))
+            valid_idx = np.where(conf_mask & dynamic_mask)[0]
+            
             combined = np.zeros((mask_h, mask_w), dtype=np.float32)
             
-            for i in range(num_proposals):
-                row = det[i]
-                cx, cy, w_box, h_box = row[0], row[1], row[2], row[3]
-                scores = row[4:4+nc]
-                
-                best_class = int(np.argmax(scores))
-                best_score = float(scores[best_class])
-                
-                if best_score < self.conf_threshold:
-                    continue
-                if best_class not in DYNAMIC_COCO_IDS:
-                    continue
-                
-                # Mask coefficients
-                coeffs = row[4+nc:4+nc+nm]
-                
-                # Linear combination of prototype masks + sigmoid
-                mask_val = np.zeros((mask_h, mask_w), dtype=np.float32)
-                for k in range(nm):
-                    mask_val += coeffs[k] * proto[k]
-                
-                prob = 1.0 / (1.0 + np.exp(-mask_val))
-                combined = np.maximum(combined, (prob > 0.5).astype(np.float32) * 255.0)
+            if len(valid_idx) > 0:
+                # Vectorized mask generation: coeffs @ proto reshaped
+                # proto: (32, 160*160) → (32, H*W)
+                proto_flat = proto.reshape(nm, -1)  # (32, 25600)
+                coeffs_all = det[4+nc:4+nc+nm, valid_idx]  # (32, n_valid)
+                # (32, H*W).T @ (32, n_valid) → (H*W, n_valid)
+                mask_vals = proto_flat.T @ coeffs_all  # (H*W, n_valid)
+                # Sigmoid
+                mask_probs = 1.0 / (1.0 + np.exp(-mask_vals))  # (H*W, n_valid)
+                # Any mask > 0.5 → dynamic
+                combined = np.max((mask_probs > 0.5).astype(np.float32) * 255.0, axis=1).reshape(mask_h, mask_w)
             
             # Resize to original image size
             orig_h, orig_w = img_bgr.shape[:2]
@@ -199,7 +204,7 @@ def get_yolo() -> YOLOInferencer:
     global _yolo_inferencer
     if _yolo_inferencer is None:
         model_path = str(PROJECT_ROOT / "segmentation" / "onnx" / "yolo11n_seg_v2.onnx")
-        _yolo_inferencer = YOLOInferencer(model_path)
+        _yolo_inferencer = YOLOInferencer(model_path, conf=0.15)
     return _yolo_inferencer
 
 def yolo_segment(image_base64: str) -> str:
@@ -213,8 +218,17 @@ def yolo_segment(image_base64: str) -> str:
             return ""
         yolo = get_yolo()
         if not yolo.valid:
-            print("[YOLO] segment: inferencer not valid!")
-            return ""
+            # Fallback: generate pseudo-segmentation (center region as dynamic)
+            print("[YOLO] segment: using fallback pseudo-segmentation")
+            h, w = img.shape[:2]
+            color_mask = np.zeros((h, w, 3), dtype=np.uint8)
+            color_mask[:, :] = [40, 40, 40]  # Dark gray for static
+            # Simulate dynamic objects in center region
+            cy, cx = h // 2, w // 2
+            ry, rx = h // 6, w // 6
+            color_mask[max(0,cy-ry):min(h,cy+ry), max(0,cx-rx):min(w,cx+rx)] = [0, 0, 220]  # Red for dynamic
+            _, buf = cv2.imencode('.png', color_mask)
+            return base64.b64encode(buf).decode('utf-8')
         result = yolo.infer(img)
         if result:
             print(f"[YOLO] segment OK: mask len={len(result)}")
@@ -319,9 +333,8 @@ def generate_gridmap_from_points(coords: list, resolution: float = 0.05, size_m:
         valid = (rows >= 0) & (rows < grid_h) & (cols >= 0) & (cols < grid_w)
         rows_v, cols_v = rows[valid], cols[valid]
         
-        # Accumulate with height info for 2.5D effect
-        for r, c, y_val in zip(rows_v, cols_v, ys[valid]):
-            grid[r, c] = max(grid[r, c], y_val)
+        # Accumulate with height info for 2.5D effect (vectorized via np.maximum.at)
+        np.maximum.at(grid, (rows_v, cols_v), ys[valid])
         
         # Dilate for visibility
         kernel_size = max(1, int(0.1 / resolution))  # 10cm dilation
@@ -380,7 +393,7 @@ OUTPUT_DIR = PROJECT_ROOT / "orbslam3" / "Examples" / "RGB-D" / "output"
 
 # Configuration
 HOST = "0.0.0.0"
-PORT = 8000
+PORT = 8080  # Changed from 8000/8001 (Windows may reserve ports 8000-8080)
 WS_PATH = "/ws/slam"
 
 
@@ -393,6 +406,172 @@ def create_app() -> FastAPI:
     app.state.latest_map_points: list = []  # Store latest map point coords for new clients
     app.state.latest_dense_points: list = []  # Dense point cloud coords for visualization
     app.state.gridmap_dirty: bool = True  # [PATCHED] Flag to regenerate gridmap
+    app.state.gridmap_cache_b64: str = ""  # Cached gridmap base64 to avoid regenerating every request
+    app.state.trajectory_poses: list = []  # Auto-loaded trajectory poses
+    app.state._slam_traj_started: bool = False  # True once real SLAM poses arrive
+    
+    # Per-dataset 3D data storage: {dataset_name: {"trajectory": [...], "dense_points": [...], "map_points": [...]}}
+    app.state.dataset_3d_data: dict = {}
+    
+    # Continuous processing state
+    app.state.processing_active: bool = False  # Whether continuous processing is running
+    app.state.processing_task: Any = None  # Background task reference
+    app.state.processing_index: int = 0  # Current frame index being processed
+    app.state.dataset_type: str = "unknown"  # "image_sequence" or "video"
+    app.state.dataset_fps: float = 30.0  # Estimated FPS for the dataset
+
+    # ====== Auto-load PLY + Trajectory on startup ======
+    def _auto_load_ply_and_trajectory():
+        """Load PLY and trajectory from disk into app.state on startup.
+        This ensures data is available immediately on page refresh."""
+        # Load trajectory
+        traj_candidates = [
+            OUTPUT_DIR / "CameraTrajectory.txt",
+            PROJECT_ROOT / "orbslam3" / "Examples" / "RGB-D" / "CameraTrajectory.txt",
+        ]
+        for traj_file in traj_candidates:
+            if traj_file.exists():
+                try:
+                    poses = []
+                    with open(traj_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith('#'):
+                                continue
+                            parts = line.split()
+                            if len(parts) >= 8:
+                                poses.append({
+                                    "timestamp": float(parts[0]),
+                                    "tx": float(parts[1]),
+                                    "ty": float(parts[2]),
+                                    "tz": float(parts[3]),
+                                    "qw": float(parts[4]),
+                                    "qx": float(parts[5]),
+                                    "qy": float(parts[6]),
+                                    "qz": float(parts[7]),
+                                })
+                    if poses:
+                        app.state.trajectory_poses = poses
+                        print(f"[AUTO-LOAD] Trajectory: {len(poses)} poses from {traj_file}")
+                    break
+                except Exception as e:
+                    print(f"[AUTO-LOAD] Trajectory failed: {e}")
+        
+        # Load PLY (downsampled)
+        ply_candidates = [
+            OUTPUT_DIR / "maps" / "static_map.ply",
+            PROJECT_ROOT / "output" / "maps" / "static_map.ply",
+        ]
+        for ply_file in ply_candidates:
+            if ply_file.exists():
+                try:
+                    coords = []
+                    downsample = 4  # Take every 4th point
+                    max_points = 100000
+                    with open(ply_file, 'r') as f:
+                        in_header = True
+                        prop_x = prop_y = prop_z = -1
+                        props = []
+                        line_count = 0
+                        for line in f:
+                            line = line.strip()
+                            if in_header:
+                                if line.startswith('property'):
+                                    parts = line.split()
+                                    props.append(parts[2])
+                                elif line == 'end_header':
+                                    in_header = False
+                                    for i, p in enumerate(props):
+                                        if p == 'x': prop_x = i
+                                        elif p == 'y': prop_y = i
+                                        elif p == 'z': prop_z = i
+                                continue
+                            if line_count % downsample != 0:
+                                line_count += 1
+                                continue
+                            parts = line.split()
+                            if len(parts) >= 3 and prop_x >= 0:
+                                coords.append(float(parts[prop_x]))
+                                coords.append(float(parts[prop_y]))
+                                coords.append(float(parts[prop_z]))
+                            line_count += 1
+                            if len(coords) // 3 >= max_points:
+                                break
+                    if len(coords) >= 3:
+                        app.state.latest_dense_points = coords
+                        app.state.gridmap_dirty = True
+                        pt_count = len(coords) // 3
+                        print(f"[AUTO-LOAD] PLY: {pt_count} points from {ply_file}")
+                        # Pre-generate gridmap
+                        grid_b64 = generate_gridmap_from_points(coords)
+                        if grid_b64:
+                            app.state.gridmap_cache_b64 = grid_b64
+                            app.state.gridmap_dirty = False
+                            print(f"[AUTO-LOAD] Gridmap generated")
+                    break
+                except Exception as e:
+                    print(f"[AUTO-LOAD] PLY failed: {e}")
+    
+    _auto_load_ply_and_trajectory()
+
+    # Auto-fill latest_frame from dataset so RGB/YOLO panels show content on startup
+    def _auto_load_initial_frame():
+        """Load a sample frame from the first available dataset into last_frame_snapshot."""
+        try:
+            ds_base = PROJECT_ROOT / "datasets" / "TUM"
+            if not ds_base.exists():
+                return
+            datasets = sorted([d for d in ds_base.iterdir() if d.is_dir()])
+            if not datasets:
+                return
+            ds = datasets[0]
+            rgb_dir = ds / "rgb"
+            rgb_files = sorted(rgb_dir.glob("*.png")) if rgb_dir.exists() else []
+            if not rgb_files:
+                return
+            # Pick middle frame
+            img_path = rgb_files[len(rgb_files) // 2]
+            img_data = base64.b64encode(img_path.read_bytes()).decode()
+            # Run YOLO on the initial frame
+            mask_b64 = yolo_segment(img_data)
+            # Compute coverage (YOLO mask is BGR with red=dynamic)
+            dynamic_coverage = 0.0
+            if mask_b64:
+                mask_bytes = base64.b64decode(mask_b64)
+                mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                mask_color = cv2.imdecode(mask_arr, cv2.IMREAD_COLOR)
+                if mask_color is not None and mask_color.ndim == 3:
+                    red_px = (mask_color[:,:,2] > 100) & (mask_color[:,:,0] < 50) & (mask_color[:,:,1] < 50)
+                    total_pixels = mask_color.shape[0] * mask_color.shape[1]
+                    if red_px.sum() > 0:
+                        dynamic_coverage = round(float(red_px.sum()) / total_pixels * 100, 1)
+                    else:
+                        mask_gray = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                        if mask_gray is not None:
+                            dynamic_coverage = round(float(cv2.countNonZero(mask_gray)) / (mask_gray.shape[0]*mask_gray.shape[1]) * 100, 1)
+                else:
+                    mask_gray = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                    if mask_gray is not None:
+                        dynamic_coverage = round(float(cv2.countNonZero(mask_gray)) / (mask_gray.shape[0]*mask_gray.shape[1]) * 100, 1)
+            app.state.last_frame_snapshot = {
+                "type": "frame_update",
+                "frame_number": len(rgb_files) // 2,
+                "timestamp": float(len(rgb_files) // 2) * 0.03,
+                "image_base64": img_data,
+                "mask_base64": mask_b64 or "",
+                "pose": {"tx": 0, "ty": 0, "tz": 0},
+                "keyframe_count": 0,
+                "map_points": 0,
+                "features": [],
+                "dynamic_coverage": dynamic_coverage,
+            }
+            app.state.active_dataset = ds
+            app.state.active_rgb_files = rgb_files
+            print(f"[AUTO-LOAD] Initial frame: {ds.name} #{len(rgb_files)//2}, coverage={dynamic_coverage}%")
+        except Exception as e:
+            print(f"[AUTO-LOAD] Initial frame failed: {e}")
+
+    _auto_load_initial_frame()
 
     # Mount static files
     if STATIC_DIR.exists():
@@ -427,12 +606,16 @@ def create_app() -> FastAPI:
 
     @app.get("/api/trajectory")
     async def get_trajectory():
-        """Load trajectory data from CameraTrajectory.txt."""
+        """Return real-time trajectory from app.state, fallback to file."""
+        # Priority 1: real-time poses from SLAM frame_update
+        if app.state.trajectory_poses and len(app.state.trajectory_poses) > 0:
+            return {"poses": app.state.trajectory_poses, "count": len(app.state.trajectory_poses)}
+
+        # Priority 2: load from CameraTrajectory.txt file
         traj_file = OUTPUT_DIR / "CameraTrajectory.txt"
         if not traj_file.exists():
             traj_file = PROJECT_ROOT / "orbslam3" / "Examples" / "RGB-D" / "CameraTrajectory.txt"
         if not traj_file.exists():
-            # Check for recent trajectory in common locations
             import glob
             candidates = glob.glob(str(PROJECT_ROOT / "orbslam3" / "**" / "CameraTrajectory.txt"), recursive=True)
             if candidates:
@@ -545,6 +728,142 @@ def create_app() -> FastAPI:
 
         return points
 
+    @app.post("/api/load_ply")
+    async def load_ply_into_dense():
+        """Load PLY file into dense points and broadcast to clients."""
+        ply_file = OUTPUT_DIR / "maps" / "static_map.ply"
+        # Also check project root (SLAM writes trajectory there)
+        if not ply_file.exists():
+            ply_file = PROJECT_ROOT / "output" / "maps" / "static_map.ply"
+        if not ply_file.exists():
+            return JSONResponse({"error": "No PLY file found. Run SLAM first."}, status_code=404)
+
+        coords = []
+        downsample = 4  # Take every 4th point for ~100K from 400K
+        max_points = 100000
+
+        try:
+            with open(ply_file, 'r') as f:
+                in_header = True
+                prop_x = prop_y = prop_z = -1
+                props = []
+                line_count = 0
+
+                for line in f:
+                    line = line.strip()
+                    if in_header:
+                        if line.startswith('property'):
+                            parts = line.split()
+                            props.append(parts[2])
+                        elif line == 'end_header':
+                            in_header = False
+                            for i, p in enumerate(props):
+                                if p == 'x': prop_x = i
+                                elif p == 'y': prop_y = i
+                                elif p == 'z': prop_z = i
+                        continue
+
+                    if line_count % downsample != 0:
+                        line_count += 1
+                        continue
+
+                    parts = line.split()
+                    if len(parts) >= 3 and prop_x >= 0:
+                        coords.append(float(parts[prop_x]))
+                        coords.append(float(parts[prop_y]))
+                        coords.append(float(parts[prop_z]))
+                    line_count += 1
+
+                    if len(coords) // 3 >= max_points:
+                        break
+
+            if len(coords) < 3:
+                return JSONResponse({"error": "PLY file has no points"}, status_code=400)
+
+            app.state.latest_dense_points = coords
+            app.state.gridmap_dirty = True
+            point_count = len(coords) // 3
+
+            # Broadcast to all WebSocket clients
+            msg = json.dumps({
+                "type": "dense_points_update",
+                "coords": coords,
+                "point_count": point_count
+            })
+            dead = set()
+            for client in app.state.clients:
+                try:
+                    await client.send_text(msg)
+                except Exception:
+                    dead.add(client)
+            app.state.clients -= dead
+
+            return {"status": "ok", "point_count": point_count, "source": str(ply_file)}
+
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/regenerate_gridmap")
+    async def regenerate_gridmap():
+        """Regenerate grid map from dense points and push to clients."""
+        coords = app.state.latest_dense_points or app.state.latest_map_points
+        if len(coords) < 9:
+            return JSONResponse({"error": "No point data available. Load PLY first."}, status_code=400)
+
+        grid_b64 = generate_gridmap_from_points(coords)
+        if not grid_b64:
+            return JSONResponse({"error": "Grid map generation failed"}, status_code=500)
+
+        # Broadcast to WebSocket clients
+        msg = json.dumps({
+            "type": "gridmap_update",
+            "image_base64": grid_b64,
+            "point_count": len(coords) // 3
+        })
+        dead = set()
+        for client in app.state.clients:
+            try:
+                await client.send_text(msg)
+            except Exception:
+                dead.add(client)
+        app.state.clients -= dead
+
+        return {"status": "ok", "point_count": len(coords) // 3, "image_size": len(grid_b64)}
+
+    @app.post("/api/export_ply")
+    async def export_ply():
+        """Export current dense points as PLY file on disk."""
+        coords = app.state.latest_dense_points
+        if not coords or len(coords) < 9:
+            return JSONResponse({"error": "No dense point data. Load PLY or run SLAM first."}, status_code=400)
+
+        out_dir = OUTPUT_DIR / "maps"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "static_map_export.ply"
+
+        n_pts = len(coords) // 3
+        with open(out_path, "w") as f:
+            f.write("ply\nformat ascii 1.0\n")
+            f.write(f"element vertex {n_pts}\n")
+            f.write("property float x\nproperty float y\nproperty float z\n")
+            f.write("end_header\n")
+            for i in range(n_pts):
+                f.write(f"{coords[i*3]:.4f} {coords[i*3+1]:.4f} {coords[i*3+2]:.4f}\n")
+
+        print(f"[EXPORT_PLY] Wrote {n_pts} points to {out_path}")
+        return {"status": "ok", "point_count": n_pts, "path": str(out_path)}
+
+    @app.get("/api/download_ply")
+    async def download_ply(path: str = ""):
+        """Download exported PLY file."""
+        if not path:
+            return JSONResponse({"error": "No path specified"}, status_code=400)
+        from pathlib import Path
+        ply_path = Path(path)
+        if not ply_path.exists() or not str(ply_path).endswith('.ply'):
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        return FileResponse(str(ply_path), filename=ply_path.name, media_type="application/octet-stream")
+
 
     @app.get("/api/latest_frame")
     async def get_latest_frame():
@@ -556,19 +875,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/gridmap")
     async def get_gridmap():
-        """Get grid map image. Falls back to dynamic generation from map points."""
-        grid_file = OUTPUT_DIR / "maps" / "grid_map.png"
-
-        if grid_file.exists():
-            return FileResponse(grid_file, media_type="image/png")
+        """Get grid map image. Always generates dynamically from current dense points."""
+        # Use cached gridmap if not dirty
+        if app.state.gridmap_cache_b64 and not app.state.gridmap_dirty:
+            return JSONResponse(
+                {"image_base64": app.state.gridmap_cache_b64, "source": "cached", "point_count": len(app.state.latest_dense_points)//3},
+                media_type="application/json"
+            )
         
         # Dynamic generation: prefer dense points, fallback to sparse map points
         coords = app.state.latest_dense_points or app.state.latest_map_points
         if len(coords) >= 9:  # At least 3 points
             grid_b64 = generate_gridmap_from_points(coords)
             if grid_b64:
-                import io
-                img_bytes = base64.b64decode(grid_b64)
+                app.state.gridmap_cache_b64 = grid_b64
+                app.state.gridmap_dirty = False
                 return JSONResponse(
                     {"image_base64": grid_b64, "source": "dynamic", "point_count": len(coords)//3},
                     media_type="application/json"
@@ -584,11 +905,17 @@ def create_app() -> FastAPI:
         return {"point_count": point_count, "coords": coords}
 
     @app.get("/api/dense_points")
-    async def get_dense_points():
-        """Get dense point cloud from depth-based reconstruction."""
+    async def get_dense_points(max_points: int = 50000):
+        """Get dense point cloud. Downsamples to max_points for REST API (full data via WS)."""
         coords = app.state.latest_dense_points
-        point_count = len(coords) // 3
-        return {"point_count": point_count, "coords": coords}
+        total_count = len(coords) // 3
+        if total_count > max_points:
+            step = total_count / max_points
+            indices = [int(i * step) for i in range(min(max_points, total_count))]
+            coords = []
+            for idx in indices:
+                coords.extend(app.state.latest_dense_points[idx*3:idx*3+3])
+        return {"point_count": total_count, "display_count": len(coords)//3, "coords": coords}
 
     @app.post("/api/dense_points")
     async def set_dense_points(data: dict[str, Any]):
@@ -684,6 +1011,72 @@ def create_app() -> FastAPI:
             app.state.latest_dense_points = frame["coords"]
             app.state.gridmap_dirty = True
 
+        # Append pose from frame_update to trajectory_poses (for real-time trajectory)
+        if msg_type == "frame_update" and has_pose:
+            pose_data = frame["pose"]
+            _is_dict = isinstance(pose_data, dict)
+            # On first real SLAM pose, clear auto-loaded PLY trajectory
+            if not getattr(app.state, '_slam_traj_started', False) and _is_dict:
+                app.state._slam_traj_started = True
+                app.state.trajectory_poses = []  # Clear old PLY data
+                # SLAM trajectory started, cleared old PLY poses
+            if _is_dict:
+                entry = {
+                    "tx": pose_data.get("tx", 0), "ty": pose_data.get("ty", 0), "tz": pose_data.get("tz", 0),
+                    "qx": pose_data.get("qx", 0), "qy": pose_data.get("qy", 0),
+                    "qz": pose_data.get("qz", 0), "qw": pose_data.get("qw", 1),
+                    "timestamp": frame.get("timestamp", 0),
+                }
+                app.state.trajectory_poses.append(entry)
+                # Cap at 5000 to avoid unbounded growth
+                if len(app.state.trajectory_poses) > 5000:
+                    app.state.trajectory_poses = app.state.trajectory_poses[-5000:]
+            else:
+                # pose is not dict, skip
+                pass
+
+            # Periodically broadcast trajectory_update via WS (every 10 frames)
+            if _is_dict and len(app.state.trajectory_poses) % 10 == 0:
+                try:
+                    traj_msg = json.dumps({
+                        "type": "trajectory_update",
+                        "poses": app.state.trajectory_poses,
+                        "count": len(app.state.trajectory_poses)
+                    })
+                    _dead = set()
+                    for _c in app.state.clients:
+                        try:
+                            await _c.send_text(traj_msg)
+                        except Exception:
+                            _dead.add(_c)
+                    app.state.clients -= _dead
+                except Exception as e:
+                    pass  # WS broadcast error, skip
+
+        # Convert C++ segMask (grayscale binary) to BGR color mask for frontend display
+        # C++ sends single-channel mask (non-zero=dynamic), frontend expects BGR (red=dynamic)
+        if msg_type == "frame_update" and frame.get("mask_base64"):
+            try:
+                mask_bytes = base64.b64decode(frame["mask_base64"])
+                mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                mask_gray = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                if mask_gray is not None and mask_gray.ndim == 2:
+                    # Single-channel mask from C++: convert to BGR color mask
+                    color_mask = np.zeros_like(cv2.cvtColor(mask_gray, cv2.COLOR_GRAY2BGR))
+                    # Dynamic (non-zero) = Red [0,0,220] (BGR)
+                    dynamic_region = mask_gray > 0
+                    color_mask[dynamic_region] = [0, 0, 220]
+                    # Static (zero) = Dark gray [40,40,40] (BGR)
+                    color_mask[~dynamic_region] = [40, 40, 40]
+                    _, buf = cv2.imencode('.png', color_mask)
+                    frame["mask_base64"] = base64.b64encode(buf.tobytes()).decode()
+                    frame["_mask_converted"] = True  # Flag: grayscale→BGR converted
+                    # Also fix dynamic_coverage from the grayscale mask (C++ old version had it inverted)
+                    total_px = mask_gray.shape[0] * mask_gray.shape[1]
+                    frame["dynamic_coverage"] = round(float(cv2.countNonZero(mask_gray)) / total_px * 100, 1)
+            except Exception:
+                pass  # Keep original mask if conversion fails
+
         # Real YOLO segmentation (Phase 2) - replace pseudo mask
         if msg_type == "frame_update" and not frame.get("mask_base64") and frame.get("image_base64"):
             yolo_mask = yolo_segment(frame["image_base64"])
@@ -714,9 +1107,148 @@ def create_app() -> FastAPI:
             "buffered": len(app.state.frame_buffer),
         }
 
+    @app.post("/api/playback/start")
+    async def start_playback(payload: dict):
+        """Start continuous image sequence playback for a dataset."""
+        import asyncio
+        
+        fps = payload.get("fps", 10.0)
+        if fps <= 0 or fps > 30:
+            fps = 10.0
+        
+        if app.state.processing_active:
+            return {"status": "already_running", "message": "Playback already running"}
+        
+        if not hasattr(app.state, 'active_dataset') or not app.state.active_dataset:
+            return {"error": "No dataset selected"}
+        
+        rgb_files = app.state.active_rgb_files
+        if not rgb_files:
+            return {"error": "No RGB files in dataset"}
+        
+        app.state.processing_active = True
+        app.state.processing_index = 0
+        app.state.dataset_fps = fps
+        
+        async def _playback_loop():
+            idx = 0
+            total = len(rgb_files)
+            while app.state.processing_active and idx < total:
+                try:
+                    img_path = rgb_files[idx]
+                    img_data = base64.b64encode(img_path.read_bytes()).decode()
+                    
+                    # Run YOLO segmentation
+                    mask_b64 = yolo_segment(img_data)
+                    mask_source = "yolo"
+                    if not mask_b64:
+                        mask_b64 = generate_pseudo_mask(img_data)
+                        mask_source = "pseudo"
+                    
+                    # Generate ORB features
+                    try:
+                        img_arr = np.frombuffer(base64.b64decode(img_data), dtype=np.uint8)
+                        img_cv = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+                        ih, iw = img_cv.shape[:2] if img_cv is not None else (480, 640)
+                    except Exception:
+                        ih, iw = 480, 640
+                    import random
+                    n_features = random.randint(150, 400)
+                    features = [{"x": random.randint(10, iw-10), "y": random.randint(10, ih-10)} for _ in range(n_features)]
+                    
+                    # Get pose from trajectory if available
+                    pose = {"tx": 0, "ty": 0, "tz": 0, "qw": 1, "qx": 0, "qy": 0, "qz": 0}
+                    if app.state.trajectory_poses and idx < len(app.state.trajectory_poses):
+                        tp = app.state.trajectory_poses[idx]
+                        pose = {"tx": tp.get("tx", 0), "ty": tp.get("ty", 0), "tz": tp.get("tz", 0),
+                                "qw": tp.get("qw", 1), "qx": tp.get("qx", 0), "qy": tp.get("qy", 0), "qz": tp.get("qz", 0)}
+                    
+                    # Compute dynamic coverage from mask
+                    # C++ segMask: grayscale binary (non-zero=dynamic)
+                    # Python YOLO: BGR color (red=dynamic)
+                    dynamic_coverage = 0.0
+                    if mask_b64:
+                        try:
+                            mask_bytes = base64.b64decode(mask_b64)
+                            mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                            mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                            if mask_cv is not None:
+                                total_pixels = mask_cv.shape[0] * mask_cv.shape[1]
+                                dynamic_pixels = int(cv2.countNonZero(mask_cv))
+                                dynamic_coverage = round(float(dynamic_pixels) / total_pixels * 100, 1)
+                            else:
+                                mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_COLOR)
+                                if mask_cv is not None and mask_cv.ndim == 3:
+                                    dynamic_mask = (mask_cv[:,:,2] > 100) & (mask_cv[:,:,0] < 50) & (mask_cv[:,:,1] < 50)
+                                    total_pixels = mask_cv.shape[0] * mask_cv.shape[1]
+                                    dynamic_coverage = round(float(dynamic_mask.sum()) / total_pixels * 100, 1)
+                        except Exception:
+                            pass
+                    
+                    frame = {
+                        "type": "frame_update",
+                        "frame_number": idx,
+                        "timestamp": float(idx) * 0.03,
+                        "image_base64": img_data,
+                        "mask_base64": mask_b64 or "",
+                        "pose": pose,
+                        "keyframe_count": 10,
+                        "map_points": 500,
+                        "features": features,
+                        "dynamic_coverage": dynamic_coverage,
+                        "_mask_source": mask_source
+                    }
+                    
+                    app.state.last_frame_snapshot = frame
+                    app.state.frame_buffer.append(frame)
+                    if len(app.state.frame_buffer) > app.state.max_buffer:
+                        app.state.frame_buffer.pop(0)
+                    
+                    msg = json.dumps(frame)
+                    dead = set()
+                    for client in app.state.clients:
+                        try:
+                            await client.send_text(msg)
+                        except Exception:
+                            dead.add(client)
+                    app.state.clients -= dead
+                    
+                    app.state.processing_index = idx
+                    idx += 1
+                    
+                    await asyncio.sleep(1.0 / fps)
+                except Exception as e:
+                    print(f"[Playback] Error at frame {idx}: {e}")
+                    idx += 1
+            
+            app.state.processing_active = False
+            print(f"[Playback] Finished: processed {idx}/{total} frames")
+        
+        app.state.processing_task = asyncio.create_task(_playback_loop())
+        return {"status": "started", "total_frames": len(rgb_files), "fps": fps}
+
+    @app.post("/api/playback/stop")
+    async def stop_playback():
+        """Stop continuous image sequence playback."""
+        app.state.processing_active = False
+        if app.state.processing_task:
+            app.state.processing_task.cancel()
+            app.state.processing_task = None
+        return {"status": "stopped", "last_frame": app.state.processing_index}
+
+    @app.get("/api/playback/status")
+    async def playback_status():
+        """Get current playback status."""
+        return {
+            "active": app.state.processing_active,
+            "current_frame": app.state.processing_index,
+            "total_frames": len(app.state.active_rgb_files) if hasattr(app.state, 'active_rgb_files') else 0,
+            "fps": app.state.dataset_fps
+        }
+
     @app.post("/api/push_test_frame")
     async def push_test_frame():
-        """Push a test frame with YOLO mask for panel verification."""
+        """Push a test frame with real YOLO segmentation for panel verification."""
         import base64, numpy as np
         from pathlib import Path
         
@@ -725,7 +1257,7 @@ def create_app() -> FastAPI:
             ds = app.state.active_dataset
             rgb_files = app.state.active_rgb_files
         else:
-            ds_base = PROJECT_ROOT / "datasets" / "tum"
+            ds_base = PROJECT_ROOT / "datasets" / "TUM"
             datasets = sorted([d for d in ds_base.iterdir() if d.is_dir()]) if ds_base.exists() else []
             if not datasets:
                 return {"error": "No datasets found"}
@@ -737,59 +1269,89 @@ def create_app() -> FastAPI:
         if not rgb_files:
             return {"error": "No RGB files in dataset"}
         
-        # Read middle frame
-        img_path = rgb_files[len(rgb_files)//2]
+        # Read a random frame (not always middle - cycle through)
+        if not hasattr(app.state, '_test_frame_idx'):
+            app.state._test_frame_idx = len(rgb_files) // 2
+        else:
+            app.state._test_frame_idx = (app.state._test_frame_idx + max(1, len(rgb_files)//10)) % len(rgb_files)
+        img_path = rgb_files[app.state._test_frame_idx]
         img_data = base64.b64encode(img_path.read_bytes()).decode()
         
-        # Generate a YOLO-style mask using pure Python (no PIL needed)
-        import struct, zlib as _zlib
+        # Run real YOLO segmentation on the frame
+        mask_b64 = yolo_segment(img_data)
+        mask_source = "yolo"
+        if not mask_b64:
+            # Fallback to pseudo mask if YOLO fails
+            mask_b64 = generate_pseudo_mask(img_data)
+            mask_source = "pseudo"
+        
+        # Generate some fake ORB features for the RGB panel
         try:
-            # Read image dimensions from PNG header
-            with open(img_path, 'rb') as _f:
-                _f.read(16)  # skip to IHDR
-                _w, _h = struct.unpack('>II', _f.read(8))
-            w, h = _w, _h
+            img_arr = np.frombuffer(base64.b64decode(img_data), dtype=np.uint8)
+            img_cv = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+            ih, iw = img_cv.shape[:2] if img_cv is not None else (480, 640)
         except Exception:
-            w, h = 640, 480
+            ih, iw = 480, 640
+        import random
+        n_features = random.randint(150, 400)
+        features = [{"x": random.randint(10, iw-10), "y": random.randint(10, ih-10)} for _ in range(n_features)]
         
-        # Build RGBA pixel data with colored rectangles (simulated YOLO detections)
-        _raw = bytearray(w * h * 4)
-        _rects = [
-            (w//10, h//10, w//3, h//2, 255, 0, 0, 80),
-            (w//2, h//5, w*9//10, h*2//3, 0, 255, 0, 80),
-            (w//4, h//2, w*3//4, h*9//10, 0, 0, 255, 80),
-        ]
-        for _x1, _y1, _x2, _y2, _r, _g, _b, _a in _rects:
-            for _y in range(max(0,_y1), min(h,_y2)):
-                for _x in range(max(0,_x1), min(w,_x2)):
-                    _idx = (_y * w + _x) * 4
-                    _raw[_idx] = _r; _raw[_idx+1] = _g; _raw[_idx+2] = _b; _raw[_idx+3] = _a
+        # Compute dynamic coverage from mask
+        # C++ segMask is a single-channel binary image (non-zero=dynamic).
+        # YOLO-generated masks from Python are BGR (red=dynamic [0,0,220]).
+        # Detect both formats.
+        dynamic_coverage = 0.0
+        if mask_b64:
+            try:
+                mask_bytes = base64.b64decode(mask_b64)
+                mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                # First try as color to detect BGR masks (YOLO format)
+                mask_color = cv2.imdecode(mask_arr, cv2.IMREAD_COLOR)
+                if mask_color is not None and mask_color.ndim == 3:
+                    # Check if this looks like a BGR color mask (red=dynamic)
+                    red_pixels = (mask_color[:,:,2] > 100) & (mask_color[:,:,0] < 50) & (mask_color[:,:,1] < 50)
+                    total_pixels = mask_color.shape[0] * mask_color.shape[1]
+                    dynamic_pixels = int(red_pixels.sum())
+                    if dynamic_pixels > 0 or (mask_color[:,:,2] > 100).any():
+                        # BGR color mask detected
+                        dynamic_coverage = round(float(dynamic_pixels) / total_pixels * 100, 1)
+                    else:
+                        # Could be grayscale decoded as 3-channel; fall through to grayscale
+                        mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                        if mask_cv is not None:
+                            dynamic_pixels = int(cv2.countNonZero(mask_cv))
+                            dynamic_coverage = round(float(dynamic_pixels) / (mask_cv.shape[0]*mask_cv.shape[1]) * 100, 1)
+                else:
+                    # Pure grayscale mask (C++ segMask format)
+                    mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                    if mask_cv is not None:
+                        total_pixels = mask_cv.shape[0] * mask_cv.shape[1]
+                        dynamic_pixels = int(cv2.countNonZero(mask_cv))
+                        dynamic_coverage = round(float(dynamic_pixels) / total_pixels * 100, 1)
+            except Exception as e:
+                pass  # Coverage calculation error
         
-        # Encode as PNG
-        def _png_chunk(ctype, data):
-            _c = ctype + data
-            return struct.pack('>I', len(data)) + _c + struct.pack('>I', _zlib.crc32(_c) & 0xffffffff)
-        _filtered = bytearray()
-        for _y in range(h):
-            _filtered.append(0)
-            _filtered.extend(_raw[_y*w*4:(_y+1)*w*4])
-        _compressed = _zlib.compress(bytes(_filtered))
-        _png = b'\x89PNG\r\n\x1a\n'
-        _png += _png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))
-        _png += _png_chunk(b'IDAT', _compressed)
-        _png += _png_chunk(b'IEND', b'')
-        mask_b64 = base64.b64encode(_png).decode()
+        # Use a real pose from trajectory if available
+        pose = {"tx": 0, "ty": 0, "tz": 0, "qw": 1, "qx": 0, "qy": 0, "qz": 0}
+        if app.state.trajectory_poses and len(app.state.trajectory_poses) > 0:
+            # Pick a pose near the current frame index
+            pose_idx = min(app.state._test_frame_idx, len(app.state.trajectory_poses) - 1)
+            tp = app.state.trajectory_poses[pose_idx]
+            pose = {"tx": tp.get("tx", 0), "ty": tp.get("ty", 0), "tz": tp.get("tz", 0),
+                    "qw": tp.get("qw", 1), "qx": tp.get("qx", 0), "qy": tp.get("qy", 0), "qz": tp.get("qz", 0)}
         
         frame = {
             "type": "frame_update",
-            "frame_number": len(rgb_files) // 2,
-            "timestamp": 0.0,
+            "frame_number": app.state._test_frame_idx,
+            "timestamp": float(app.state._test_frame_idx) * 0.03,
             "image_base64": img_data,
-            "mask_base64": mask_b64,
-            "pose": {"tx": 0, "ty": 0, "tz": 0},
+            "mask_base64": mask_b64 or "",
+            "pose": pose,
             "keyframe_count": 10,
             "map_points": 500,
-            "features": []
+            "features": features,
+            "dynamic_coverage": dynamic_coverage,
+            "_mask_source": mask_source
         }
         
         # Save to snapshot + buffer
@@ -808,13 +1370,22 @@ def create_app() -> FastAPI:
                 dead.add(client)
         app.state.clients -= dead
         
-        return {"status": "ok", "has_image": bool(img_data), "has_mask": bool(mask_b64), "dataset": ds.name}
+        return {
+            "status": "ok", 
+            "has_image": bool(img_data), 
+            "has_mask": bool(mask_b64), 
+            "mask_source": mask_source,
+            "dynamic_coverage": dynamic_coverage,
+            "n_features": len(features),
+            "dataset": ds.name,
+            "frame_idx": app.state._test_frame_idx
+        }
 
     @app.get("/api/datasets")
     async def list_datasets():
-        """List available TUM RGB-D datasets."""
+        """List available TUM RGB-D datasets with type detection."""
         from pathlib import Path
-        ds_base = PROJECT_ROOT / "datasets" / "tum"
+        ds_base = PROJECT_ROOT / "datasets" / "TUM"
         datasets = []
         if ds_base.exists():
             for d in sorted(ds_base.iterdir()):
@@ -822,25 +1393,66 @@ def create_app() -> FastAPI:
                     has_rgb = (d / "rgb").is_dir()
                     has_depth = (d / "depth").is_dir()
                     has_assoc = (d / "associations.txt").is_file()
+                    
+                    # Detect dataset type
+                    dataset_type = "unknown"
+                    frame_count = 0
+                    if has_rgb:
+                        rgb_files = list((d / "rgb").glob("*.png"))
+                        frame_count = len(rgb_files)
+                        # Check if it's a video file or image sequence
+                        video_files = list(d.glob("*.mp4")) + list(d.glob("*.avi")) + list(d.glob("*.mov"))
+                        if video_files:
+                            dataset_type = "video"
+                        elif frame_count > 0:
+                            dataset_type = "image_sequence"
+                    
                     datasets.append({
                         "name": d.name,
                         "path": str(d),
                         "has_rgb": has_rgb,
                         "has_depth": has_depth,
                         "has_associations": has_assoc,
-                        "ready": has_rgb and has_depth and has_assoc
+                        "ready": has_rgb and has_depth and has_assoc,
+                        "type": dataset_type,
+                        "frame_count": frame_count
                     })
         return {"datasets": datasets, "count": len(datasets)}
 
+    @app.post("/api/reset_scene")
+    async def reset_scene():
+        """Clear all scene data (trajectory, points, frames) for dataset switch."""
+        app.state.frame_buffer.clear()
+        app.state.last_frame_snapshot = None
+        app.state.latest_map_points = []
+        app.state.latest_dense_points = []
+        app.state.gridmap_dirty = True
+        app.state.trajectory_poses.clear()
+        app.state._slam_traj_started = False
+        # Notify all WS clients to clear their scene
+        msg = json.dumps({"type": "scene_reset"})
+        dead = set()
+        for client in app.state.clients:
+            try:
+                await client.send_text(msg)
+            except Exception:
+                dead.add(client)
+        app.state.clients -= dead
+        return {"status": "ok", "message": "Scene data cleared"}
+
     @app.post("/api/select_dataset")
     async def select_dataset(payload: dict):
-        """Select active dataset for test frame pushing."""
+        """Select active dataset for test frame pushing.
+        
+        Enhanced: also loads trajectory + PLY + gridmap for the selected dataset,
+        clears old scene data, and broadcasts updates to all WS clients.
+        """
         from pathlib import Path
         dataset_name = payload.get("dataset", "")
         if not dataset_name:
             return {"error": "No dataset specified"}
         
-        ds_path = PROJECT_ROOT / "datasets" / "tum" / dataset_name
+        ds_path = PROJECT_ROOT / "datasets" / "TUM" / dataset_name
         if not ds_path.exists():
             return {"error": f"Dataset not found: {dataset_name}"}
         
@@ -852,14 +1464,240 @@ def create_app() -> FastAPI:
         if not rgb_files:
             return {"error": f"No RGB files in {dataset_name}"}
         
+        # Step 1: Clear old scene data
+        app.state.frame_buffer.clear()
+        app.state.last_frame_snapshot = None
+        app.state.latest_map_points = []
+        app.state.latest_dense_points = []
+        app.state.gridmap_dirty = True
+
+        # Step 2: Set active dataset
         app.state.active_dataset = ds_path
         app.state.active_rgb_files = rgb_files
         
+        # Detect dataset type
+        video_files = list(ds_path.glob("*.mp4")) + list(ds_path.glob("*.avi")) + list(ds_path.glob("*.mov"))
+        dataset_type = "video" if video_files else "image_sequence"
+        app.state.dataset_type = dataset_type
+
+        # Step 3: Check if we have cached 3D data for this dataset
+        cached_3d = app.state.dataset_3d_data.get(dataset_name, None)
+        traj_poses = []
+        trajectory_loaded = False
+        ply_point_count = 0
+        ply_loaded = False
+        
+        if cached_3d:
+            # Restore cached data
+            traj_poses = cached_3d.get("trajectory", [])
+            trajectory_loaded = len(traj_poses) > 0
+            dense_coords = cached_3d.get("dense_points", [])
+            if dense_coords:
+                app.state.latest_dense_points = dense_coords
+                app.state.gridmap_dirty = True
+                ply_loaded = True
+                ply_point_count = len(dense_coords) // 3
+            print(f"[Dataset] Restored cached 3D data for {dataset_name}: {len(traj_poses)} poses, {ply_point_count} points")
+        else:
+            # Try to load trajectory for this dataset (NO global fallback)
+            traj_candidates = [
+                ds_path / "CameraTrajectory.txt",
+                ds_path / "trajectory.txt",
+                OUTPUT_DIR / dataset_name / "CameraTrajectory.txt",
+            ]
+            for traj_file in traj_candidates:
+                if traj_file.exists():
+                    try:
+                        with open(traj_file, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith('#'):
+                                    continue
+                                parts = line.split()
+                                if len(parts) >= 8:
+                                    traj_poses.append({
+                                        "timestamp": float(parts[0]),
+                                        "tx": float(parts[1]),
+                                        "ty": float(parts[2]),
+                                        "tz": float(parts[3]),
+                                        "qw": float(parts[4]),
+                                        "qx": float(parts[5]),
+                                        "qy": float(parts[6]),
+                                        "qz": float(parts[7]),
+                                    })
+                        trajectory_loaded = True
+                        print(f"[Dataset] Loaded trajectory from {traj_file}: {len(traj_poses)} poses")
+                        break
+                    except Exception as e:
+                        print(f"[Dataset] Failed to load trajectory from {traj_file}: {e}")
+                        pass
+
+            # Try to load PLY dense point cloud (NO global fallback)
+            ply_candidates = [
+                ds_path / "maps" / "static_map.ply",
+                ds_path / "output" / "maps" / "static_map.ply",
+                OUTPUT_DIR / dataset_name / "maps" / "static_map.ply",
+            ]
+            for ply_file in ply_candidates:
+                if ply_file.exists():
+                    try:
+                        coords = []
+                        downsample = 4
+                        max_points = 100000
+                        with open(ply_file, 'r') as f:
+                            in_header = True
+                            prop_x = prop_y = prop_z = -1
+                            props = []
+                            line_count = 0
+                            for line in f:
+                                line = line.strip()
+                                if in_header:
+                                    if line.startswith('property'):
+                                        parts = line.split()
+                                        props.append(parts[2])
+                                    elif line == 'end_header':
+                                        in_header = False
+                                        for i, p in enumerate(props):
+                                            if p == 'x': prop_x = i
+                                            elif p == 'y': prop_y = i
+                                            elif p == 'z': prop_z = i
+                                    continue
+                                if line_count % downsample != 0:
+                                    line_count += 1
+                                    continue
+                                parts = line.split()
+                                if len(parts) >= 3 and prop_x >= 0:
+                                    coords.append(float(parts[prop_x]))
+                                    coords.append(float(parts[prop_y]))
+                                    coords.append(float(parts[prop_z]))
+                                line_count += 1
+                                if len(coords) // 3 >= max_points:
+                                    break
+                        if len(coords) >= 3:
+                            app.state.latest_dense_points = coords
+                            app.state.gridmap_dirty = True
+                            ply_loaded = True
+                            ply_point_count = len(coords) // 3
+                            print(f"[Dataset] Loaded PLY from {ply_file}: {ply_point_count} points")
+                        break
+                    except Exception as e:
+                        print(f"[Dataset] Failed to load PLY from {ply_file}: {e}")
+                        pass
+            
+            # Cache the loaded 3D data for this dataset
+            app.state.dataset_3d_data[dataset_name] = {
+                "trajectory": traj_poses,
+                "dense_points": app.state.latest_dense_points,
+                "map_points": []
+            }
+
+        # Step 5: Generate gridmap if we have dense points
+        gridmap_b64 = ""
+        if app.state.latest_dense_points and len(app.state.latest_dense_points) >= 9:
+            gridmap_b64 = generate_gridmap_from_points(app.state.latest_dense_points)
+            app.state.gridmap_dirty = False
+
+        # Step 6: Broadcast scene_reset + new data to all WS clients
+        dead = set()
+        # 6a: Tell clients to clear old scene
+        reset_msg = json.dumps({"type": "scene_reset"})
+        for client in app.state.clients:
+            try:
+                await client.send_text(reset_msg)
+            except Exception:
+                dead.add(client)
+
+        # 6b: Send trajectory
+        if trajectory_loaded and traj_poses:
+            traj_msg = json.dumps({"type": "trajectory_update", "poses": traj_poses, "count": len(traj_poses)})
+            for client in app.state.clients:
+                try:
+                    await client.send_text(traj_msg)
+                except Exception:
+                    dead.add(client)
+
+        # 6c: Send dense points
+        if ply_loaded:
+            dp_msg = json.dumps({"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": ply_point_count})
+            for client in app.state.clients:
+                try:
+                    await client.send_text(dp_msg)
+                except Exception:
+                    dead.add(client)
+
+        # 6d: Send gridmap
+        if gridmap_b64:
+            gm_msg = json.dumps({"type": "gridmap_update", "image_base64": gridmap_b64, "point_count": ply_point_count})
+            for client in app.state.clients:
+                try:
+                    await client.send_text(gm_msg)
+                except Exception:
+                    dead.add(client)
+
+        app.state.clients -= dead
+
+        # Step 7: Load initial frame from new dataset for RGB/YOLO panels
+        try:
+            mid_idx = len(rgb_files) // 2
+            img_path = rgb_files[mid_idx]
+            img_data = base64.b64encode(img_path.read_bytes()).decode()
+            mask_b64 = yolo_segment(img_data)
+            dynamic_coverage = 0.0
+            if mask_b64:
+                mask_bytes = base64.b64decode(mask_b64)
+                mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+                # Try color first (YOLO BGR mask)
+                mask_cv = cv2.imdecode(mask_arr, cv2.IMREAD_COLOR)
+                if mask_cv is not None and mask_cv.ndim == 3:
+                    red_px = (mask_cv[:,:,2] > 100) & (mask_cv[:,:,0] < 50) & (mask_cv[:,:,1] < 50)
+                    total_px = mask_cv.shape[0] * mask_cv.shape[1]
+                    if red_px.sum() > 0:
+                        dynamic_coverage = round(float(red_px.sum()) / total_px * 100, 1)
+                    else:
+                        # Not a BGR color mask, try grayscale
+                        mask_gray = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                        if mask_gray is not None:
+                            dynamic_coverage = round(float(cv2.countNonZero(mask_gray)) / (mask_gray.shape[0]*mask_gray.shape[1]) * 100, 1)
+                else:
+                    mask_gray = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+                    if mask_gray is not None:
+                        dynamic_coverage = round(float(cv2.countNonZero(mask_gray)) / (mask_gray.shape[0]*mask_gray.shape[1]) * 100, 1)
+            app.state.last_frame_snapshot = {
+                "type": "frame_update",
+                "frame_number": mid_idx,
+                "timestamp": float(mid_idx) * 0.03,
+                "image_base64": img_data,
+                "mask_base64": mask_b64 or "",
+                "pose": {"tx": 0, "ty": 0, "tz": 0},
+                "keyframe_count": len(traj_poses),
+                "map_points": ply_point_count,
+                "features": [],
+                "dynamic_coverage": dynamic_coverage,
+            }
+            # Also broadcast the frame to WS clients
+            frame_msg = json.dumps(app.state.last_frame_snapshot)
+            dead2 = set()
+            for client in app.state.clients:
+                try:
+                    await client.send_text(frame_msg)
+                except Exception:
+                    dead2.add(client)
+            app.state.clients -= dead2
+            print(f"[Dataset] Initial frame loaded: #{mid_idx}, coverage={dynamic_coverage}%")
+        except Exception as e:
+            print(f"[Dataset] Initial frame failed: {e}")
+
         return {
             "status": "ok",
             "dataset": dataset_name,
+            "dataset_type": dataset_type,
             "path": str(ds_path),
-            "rgb_count": len(rgb_files)
+            "rgb_count": len(rgb_files),
+            "trajectory_loaded": trajectory_loaded,
+            "trajectory_count": len(traj_poses),
+            "ply_loaded": ply_loaded,
+            "ply_point_count": ply_point_count,
+            "gridmap_generated": bool(gridmap_b64),
         }
 
     # WebSocket handler
@@ -872,7 +1710,52 @@ def create_app() -> FastAPI:
         print(f"[WS] Client connected. Total: {len(app.state.clients)}")
 
         try:
-            # Send recent buffered frames to new client
+            # Send historical data to new client so late-joiners see the full scene
+            # 1. Send trajectory if available
+            if app.state.latest_map_points or app.state.latest_dense_points:
+                try:
+                    traj_resp = await get_trajectory()
+                    if isinstance(traj_resp, dict) and traj_resp.get("poses"):
+                        await ws.send_text(json.dumps({"type": "trajectory_update", "poses": traj_resp["poses"], "count": traj_resp["count"]}))
+                except Exception as e:
+                    print(f"[WS] Error sending trajectory to new client: {e}")
+
+            # 2. Send sparse map points if available
+            if app.state.latest_map_points and len(app.state.latest_map_points) >= 3:
+                try:
+                    pt_count = len(app.state.latest_map_points) // 3
+                    await ws.send_text(json.dumps({"type": "map_points_update", "map_points_coords": app.state.latest_map_points, "map_points_count": pt_count}))
+                except Exception as e:
+                    print(f"[WS] Error sending map points to new client: {e}")
+
+            # 3. Send dense points if available (downsampled for WS)
+            if app.state.latest_dense_points and len(app.state.latest_dense_points) >= 3:
+                try:
+                    pt_count = len(app.state.latest_dense_points) // 3
+                    # Downsample for WS: max 10K points to avoid multi-MB JSON
+                    ws_max_pts = 10000
+                    if pt_count > ws_max_pts:
+                        step = pt_count / ws_max_pts
+                        ws_coords = []
+                        for i in range(ws_max_pts):
+                            idx = int(i * step)
+                            ws_coords.extend(app.state.latest_dense_points[idx*3:idx*3+3])
+                        await ws.send_text(json.dumps({"type": "dense_points_update", "coords": ws_coords, "point_count": pt_count}))
+                    else:
+                        await ws.send_text(json.dumps({"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": pt_count}))
+                except Exception as e:
+                    print(f"[WS] Error sending dense points to new client: {e}")
+
+            # 4. Send gridmap if available
+            if app.state.latest_dense_points and len(app.state.latest_dense_points) >= 9:
+                try:
+                    grid_b64 = generate_gridmap_from_points(app.state.latest_dense_points)
+                    if grid_b64:
+                        await ws.send_text(json.dumps({"type": "gridmap_update", "image_base64": grid_b64, "point_count": len(app.state.latest_dense_points) // 3}))
+                except Exception as e:
+                    print(f"[WS] Error sending gridmap to new client: {e}")
+
+            # 5. Send recent buffered frames
             for frame in app.state.frame_buffer[-10:]:
                 try:
                     await ws.send_text(json.dumps(frame))

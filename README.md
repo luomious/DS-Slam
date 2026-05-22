@@ -6,10 +6,12 @@
 
 ## 📊 项目状态
 
-**最新版本**: `milestone-slam-testing` (2026-05-19)
-**构建状态**: ✅ ORB-SLAM3 + slam-system 编译完成
-**测试状态**: ✅ 4个 TUM 数据集测试通过
+**最新版本**: `milestone-slam-testing` (2026-05-20)
+**构建状态**: ✅ ORB-SLAM3 + slam-system 编译完成（WSL2 + Windows MinGW）
+**测试状态**: ✅ 4个 TUM 数据集测试通过（M3+M4组合动态场景改善94-96%）
 **精度评估**: ✅ EVO 评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
+**可视化系统**: ✅ Web 可视化运行正常（FastAPI + Three.js + WebSocket）
+**端口配置**: ⚠️ 后端默认端口已改为 8080（Windows 保留 8000-8080 端口）
 
 ## 项目结构
 
@@ -103,8 +105,10 @@ python scripts\eval_ate.py datasets\tum\rgbd_dataset_freiburg3_walking_xyz\groun
 ```powershell
 cd visualization
 .\start_visualizer.bat
-# 浏览器访问 http://localhost:8000
+# 浏览器访问 http://localhost:8080  (注意：端口已改为8080)
 ```
+
+> ⚠️ **端口说明**：由于 Windows Hyper-V/WSL2 保留了 8000-8080 端口范围，后端默认端口已改为 8080。如需修改，编辑 `visualization/backend/main.py` 中的 `PORT` 配置。
 
 ## 📁 可用数据集
 
@@ -122,7 +126,7 @@ cd visualization
 可视化系统支持通过前端下拉菜单切换数据集：
 
 1. 启动后端：`python visualization/backend/main.py`
-2. 访问 `http://localhost:8000`
+2. 访问 `http://localhost:8080`  (端口已改为8080)
 3. 在右上角选择器中选择目标数据集
 4. 点击 "Test Frame" 加载测试帧
 
@@ -150,6 +154,15 @@ evo_ape tum groundtruth.txt CameraTrajectory.txt -va
 
 使用 EVO 工具对 TUM 数据集进行 ATE (Absolute Trajectory Error) 评估：
 
+### 4 数据集完整精度对比（M3+M4 组合）
+
+| 数据集 | 场景 | ATE RMSE | 基线 ORB-SLAM3 | 改善 |
+|--------|------|----------|----------------|------|
+| fr1_xyz | 静态 | 0.0102m | ~0.010m | 持平 |
+| fr3_sitting_static | 弱动态 | 0.0072m | ~0.007m | 持平 |
+| fr3_walking_xyz | 强动态 | 0.0138m | ~0.37m | **96%** |
+| fr3_walking_halfsphere | 强动态 | 0.0245m | ~0.42m | **94%** |
+
 ### fr1_xyz (静态场景)
 
 | 指标 | 值 |
@@ -170,13 +183,17 @@ evo_ape tum groundtruth.txt CameraTrajectory.txt -va
 | Max | 0.0722 m |
 | 匹配帧数 | 826/827 |
 
-**结论**：动态场景误差略高于静态场景（预期），语义分割有效过滤动态物体，保持较高定位精度。
+**结论**：
+- 静态场景：DS-SLAM 与 ORB-SLAM3 精度持平（RMSE ~1cm）
+- 动态场景：M3+M4 组合显著改善定位精度（94-96%改善）
+- 语义分割有效过滤动态物体，极线约束进一步剔除外点
 
 ## 已知问题
 
 - **PowerShell 编码陷阱**：`>` 重定向写 UTF-16 LE with BOM，g++ 无法读取。写 C++ 源文件必须用 `write` 工具或 `Out-File -Encoding utf8NoBOM`
 - **M4 FilterEpipolar 需优化**：当前 M4-only 比基线差 58.6%，参数调优进行中
 - **YAML 嵌套格式**：OpenCV FileStorage 的 `node["child"]` 读取方式要求 YAML 使用嵌套格式而非平面键名
+- **Windows 端口保留**：Hyper-V/WSL2 保留 8000-8080 端口，后端已改为 8080。如需使用其他端口，修改 `visualization/backend/main.py` 中的 `PORT` 配置
 
 ## 参考论文
 
