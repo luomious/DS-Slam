@@ -21,17 +21,10 @@ void StaticMapper::AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
     // Pre-allocate to avoid repeated reallocations
     if (m_allPoints.empty()) { m_allPoints.reserve(5000000); }
 
-    // Debug: check mask
+    size_t pointsBefore = m_allPoints.size();
     int filteredByMask = 0;
     int filteredByDepth = 0;
     int totalPoints = 0;
-    if (!mask.empty()) {
-        int maskPixels = cv::countNonZero(mask);
-        std::cout << "[StaticMapper] Mask size: " << mask.size() 
-                  << ", Mask pixels: " << maskPixels 
-                  << " / " << mask.total() 
-                  << " (" << (100.0 * maskPixels / mask.total()) << "%)" << std::endl;
-    }
 
     for (int v = 0; v < depth.rows; v += step) {
         for (int u = 0; u < depth.cols; u += step) {
@@ -71,12 +64,15 @@ void StaticMapper::AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
             m_allPoints.push_back(pt);
         }
     }
-    std::cout << "[StaticMapper] Total sampled: " << totalPoints 
-              << ", Filtered by mask: " << filteredByMask 
-              << ", Filtered by depth: " << filteredByDepth
-              << ", Added points: " << m_allPoints.size() - (m_allPoints.capacity() - 5000000)
-              << std::endl;
-    m_kfCount++;
+    
+    // Print summary every 100 keyframes
+    if (++m_kfCount % 100 == 0) {
+        std::cout << "[StaticMapper] KF#" << m_kfCount 
+                  << ", Total points: " << m_allPoints.size()
+                  << ", Last KF sampled: " << totalPoints 
+                  << ", Filtered by mask: " << filteredByMask 
+                  << ", Filtered by depth: " << filteredByDepth << std::endl;
+    }
 }
 
 cv::Mat StaticMapper::BuildGridMap() const

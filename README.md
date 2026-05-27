@@ -6,13 +6,13 @@
 
 ## 📊 项目状态
 
-**最新版本**: `milestone-slam-testing` (2026-05-20)
+**最新版本**: `milestone-slam-testing` (2026-05-27)
 **构建状态**: ✅ ORB-SLAM3 + slam-system 编译完成（WSL2 + Windows MinGW）
 **测试状态**: ✅ 4个 TUM 数据集测试通过（M3+M4组合动态场景改善94-96%）
 **精度评估**: ✅ EVO 评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 **可视化系统**: ✅ Web 可视化运行正常（FastAPI + Three.js + WebSocket）
 **端口配置**: ⚠️ 后端默认端口已改为 8080（Windows 保留 8000-8080 端口）
-**最新修复**: ✅ 掩码尺寸自适应修复（2026-05-26）- 确保语义分割掩码与深度图像尺寸匹配，正确过滤人像点云
+**最新修复**: ✅ CMakeLists.txt硬编码路径修复（2026-05-27）- 使用相对路径和环境变量，支持跨平台编译
 
 ## 项目结构
 
@@ -197,6 +197,22 @@ evo_ape tum groundtruth.txt CameraTrajectory.txt -va
 - **Windows 端口保留**：Hyper-V/WSL2 保留 8000-8080 端口，后端已改为 8080。如需使用其他端口，修改 `visualization/backend/main.py` 中的 `PORT` 配置
 
 ## 更新日志
+
+### 2026-05-27 项目清理与跨平台编译修复
+- **CMakeLists.txt修复**：
+  - 移除所有Windows绝对路径硬编码（E:/VSCode/...）
+  - 使用相对路径和环境变量（$ENV{ONNXRUNTIME_ROOT}、$ENV{BOOST_ROOT}）
+  - 支持跨平台编译（Windows/WSL2/Linux）
+- **调试输出优化**：
+  - 移除Tracking.cc中每帧的调试输出（提升性能）
+  - StaticMapper改为每100关键帧输出一次摘要
+- **depthForMapping空指针修复**：
+  - 当语义分割器不可用时，使用原始深度图像作为fallback
+  - 避免空矩阵传递给StaticMapper导致崩溃
+- **项目清理**：
+  - 删除编译产物、备份文件、临时脚本
+  - 从Git历史中移除大文件（Ubuntu2204.appx 297MB）
+  - 更新.gitignore规则
 
 ### 2026-05-26 掩码尺寸自适应修复
 - **问题**：语义分割生成的掩码尺寸与深度图像不一致，导致人像点云未被正确过滤

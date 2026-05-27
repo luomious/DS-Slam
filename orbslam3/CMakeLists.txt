@@ -85,14 +85,12 @@ find_package(realsense2 QUIET)
 
 # DS-SLAM M3: ONNX Runtime
 find_path(ONNXRUNTIME_INCLUDE_DIR "onnxruntime_cxx_api.h"
-    HINTS "E:/VSCode/VSCode-Workspace/DS-Slam/libs/onnxruntime/include"
-             "E:/msys64/mingw64/include"
-             "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build"
-             "/usr/include"
-             "/usr/local/include"
-             "$ENV{HOME}/onnxruntime/include"
-             "${CMAKE_SOURCE_DIR}/../libs/onnxruntime-linux/include"
-             "${CMAKE_SOURCE_DIR}/../libs/onnxruntime/include"
+    HINTS "${CMAKE_SOURCE_DIR}/../libs/onnxruntime/include"
+          "${CMAKE_SOURCE_DIR}/../libs/onnxruntime-linux/include"
+          "$ENV{ONNXRUNTIME_ROOT}/include"
+          "/usr/include"
+          "/usr/local/include"
+          "$ENV{HOME}/onnxruntime/include"
 )
 if(ONNXRUNTIME_INCLUDE_DIR)
     message(STATUS "ONNX Runtime found at: ${ONNXRUNTIME_INCLUDE_DIR}")
@@ -102,8 +100,10 @@ endif()
 
 # Boost for DBoW2 serialization
 find_path(BOOST_INCLUDE_DIR "boost/serialization/serialization.hpp"
-    HINTS "E:/msys64/mingw64/include"
-    PATHS "/usr/local/include" "/usr/include" "/usr/include/boost"
+    HINTS "$ENV{BOOST_ROOT}/include"
+          "/usr/local/include"
+          "/usr/include"
+          "/usr/include/boost"
 )
 if(NOT BOOST_INCLUDE_DIR)
     message(FATAL_ERROR "Boost headers not found!")
@@ -111,13 +111,8 @@ endif()
 message(STATUS "Boost found at: ${BOOST_INCLUDE_DIR}")
 
 # DS-SLAM slam-system integration
-if(WIN32)
-    set(DS_SLAM_INCLUDE_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/include")
-    set(DS_SLAM_LIB_DIR "E:/VSCode/VSCode-Workspace/DS-Slam/slam-system/build")
-else()
-    set(DS_SLAM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../slam-system/include")
-    set(DS_SLAM_LIB_DIR "${CMAKE_SOURCE_DIR}/../slam-system/build")
-endif()
+set(DS_SLAM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../slam-system/include")
+set(DS_SLAM_LIB_DIR "${CMAKE_SOURCE_DIR}/../slam-system/build")
 
 # Check if slam-system libraries exist
 set(DS_SLAM_AVAILABLE FALSE)

@@ -1,14 +1,13 @@
 # DS-SLAM 项目进度跟踪
 
-> 最后更新：2026-05-20 14:30
+> 最后更新：2026-05-27 16:00
 
 ## 📊 当前状态
 
-**最新 Git 提交**: `f6fdccb` - feat: 阶段 6-7 完成 - GUI 数据集切换、文档完善、多数据集支持
-**Git Tag**: `milestone-slam-testing`
+**最新 Git 提交**: 项目清理与跨平台编译修复
 **远程仓库**: https://github.com/luomious/DS-Slam
 
-**当前阶段**: 阶段 7.5 系统效果测试 - 前端 GUI 6 个问题已修复，待测试验证
+**当前阶段**: 阶段 8 - 系统整合与产品化
 
 ## ✅ 已完成
 
@@ -23,6 +22,11 @@
 | M6 Web 可视化 | ✅ | Three.js + FastAPI + WebSocket + WinHTTP C++客户端 |
 | M7 系统集成 | ✅ | SlamVisualizer 集成到 Tracking.cc，统一启动脚本 |
 | WSL2 适配 | ✅ | 3个核心文件已修复，支持 Linux 编译 |
+| **阶段 8.1 项目清理** | ✅ | 删除编译产物、备份文件、临时脚本 |
+| **阶段 8.2 Git历史清理** | ✅ | 从历史中移除大文件（Ubuntu2204.appx 297MB） |
+| **阶段 8.3 CMakeLists.txt修复** | ✅ | 移除Windows绝对路径，使用相对路径和环境变量 |
+| **阶段 8.4 调试输出优化** | ✅ | 移除每帧调试输出，提升性能 |
+| **阶段 8.5 depthForMapping空指针修复** | ✅ | 添加fallback逻辑，避免空矩阵传递 |
 | 前后端测试 | ✅ | FastAPI 后端运行正常，API + WebSocket 测试通过 |
 | 网页效果测试 | ✅ | 浏览器预览正常，19个WebSocket客户端连接成功 |
 | **阶段 5.1 SLAM 基础测试** | ✅ | fr1_xyz 静态数据集，794帧，exit 0 |
@@ -418,3 +422,233 @@ e:\VSCode\VSCode-Workspace\DS-Slam\.venv\Scripts\python.exe e:\VSCode\VSCode-Wor
 | `KeyFrameTrajectory.txt` | 关键帧轨迹（72帧） | 2026-05-17 19:29 |
 | `start_system.bat` | 统一启动脚本（后端 + 前端 + SLAM） | - |
 | `scripts/wsl2_*.sh` | WSL2 迁移脚本 | 2026-05-14 |
+
+## 🎯 下一步：系统整合与产品化方案
+
+### 目标
+将DS-SLAM打造为一个**完整、易用、可分发**的SLAM系统，降低使用门槛，提升用户体验。
+
+### 核心问题
+1. **编译复杂**：需要手动编译多个依赖库（DBoW2、g2o、slam-system、ORB_SLAM3）
+2. **配置分散**：YAML配置文件、环境变量、硬编码路径混杂
+3. **启动繁琐**：需要手动启动后端、SLAM系统、打开浏览器
+4. **缺乏监控**：无法实时了解系统状态、性能指标、错误信息
+5. **无安装包**：新用户需要手动配置环境、下载依赖
+
+### 整合方案架构
+
+```
+DS-Slam/
+├── 📦 installer/                    # 安装包构建
+│   ├── windows/                     # Windows安装包（NSIS/Inno Setup）
+│   │   ├── setup.iss                # Inno Setup脚本
+│   │   └── install.bat              # 一键安装脚本
+│   └── linux/                       # Linux安装包（deb/rpm）
+│       ├── debian/                  # Debian包配置
+│       └── install.sh               # 一键安装脚本
+│
+├── 🔧 build/                        # 统一构建系统
+│   ├── CMakeLists.txt               # 顶层CMake配置
+│   ├── build_all.ps1                # Windows统一构建脚本
+│   ├── build_all.sh                 # Linux统一构建脚本
+│   └── toolchains/                  # 交叉编译工具链
+│       ├── mingw64.cmake
+│       └── clang.cmake
+│
+├── ⚙️ config/                       # 统一配置管理
+│   ├── ds_slam.yaml                 # 主配置文件
+│   ├── profiles/                    # 预设配置
+│   │   ├── tum_rgbd.yaml            # TUM RGB-D数据集
+│   │   ├── euroc.yaml               # EuRoC数据集
+│   │   └── kitti.yaml               # KITTI数据集
+│   └── schema.json                  # 配置验证schema
+│
+├── 🚀 launcher/                     # 系统启动器
+│   ├── ds_slam_launcher.py          # Python启动器（跨平台）
+│   ├── ds_slam_gui.py               # GUI启动器（可选）
+│   └── templates/                   # 启动模板
+│       ├── backend.template.yaml
+│       └── slam.template.yaml
+│
+├── 📊 monitor/                      # 系统监控
+│   ├── status_monitor.py            # 状态监控服务
+│   ├── metrics_collector.py         # 性能指标收集
+│   └── dashboard/                   # Web监控面板
+│       ├── index.html
+│       └── js/
+│
+├── 📚 docs/                         # 文档系统
+│   ├── user_guide.md                # 用户指南
+│   ├── developer_guide.md           # 开发者指南
+│   ├── api_reference.md             # API参考
+│   └── troubleshooting.md           # 故障排除
+│
+└── 🧪 tests/                        # 测试系统
+    ├── unit/                        # 单元测试
+    ├── integration/                 # 集成测试
+    └── benchmark/                   # 性能基准测试
+```
+
+### 实施步骤
+
+#### 阶段 8.6：统一构建系统（1-2天）
+1. 创建顶层CMakeLists.txt，统一管理所有子项目
+2. 编写build_all.ps1和build_all.sh脚本
+3. 支持一键编译所有依赖和主程序
+4. 添加编译进度显示和错误处理
+
+**详细实现**：
+```powershell
+# build_all.ps1 伪代码
+param(
+    [string]$BuildType = "Release",
+    [int]$Jobs = 4
+)
+
+$stages = @(
+    @{Name="DBoW2"; Dir="orbslam3/Thirdparty/DBoW2"},
+    @{Name="g2o"; Dir="orbslam3/Thirdparty/g2o"},
+    @{Name="slam-system"; Dir="slam-system"},
+    @{Name="ORB_SLAM3"; Dir="orbslam3"}
+)
+
+foreach ($stage in $stages) {
+    Write-Host "Building $($stage.Name)..."
+    Push-Location $stage.Dir
+    cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=$BuildType
+    cmake --build build -j$Jobs
+    Pop-Location
+}
+```
+
+#### 阶段 8.7：统一配置管理（1-2天）
+1. 创建ds_slam.yaml主配置文件
+2. 支持环境变量覆盖
+3. 添加配置验证和默认值
+4. 编写配置迁移工具
+
+**配置示例**：
+```yaml
+# ds_slam.yaml
+system:
+  name: "DS-SLAM"
+  version: "1.0.0"
+  
+paths:
+  vocabulary: "${PROJECT_ROOT}/orbslam3/Vocabulary/ORBvoc.txt"
+  onnx_model: "${PROJECT_ROOT}/segmentation/onnx/yolo11n_seg_v2.onnx"
+  output_dir: "${PROJECT_ROOT}/output"
+  
+slam:
+  camera:
+    type: "pinhole"
+    fx: 535.4
+    fy: 539.2
+    cx: 320.1
+    cy: 247.6
+    width: 640
+    height: 480
+    fps: 30
+    rgb: true
+    depth_factor: 5000.0
+  
+  orb:
+    n_features: 1000
+    scale_factor: 1.2
+    n_levels: 8
+    ini_th_fast: 20
+    min_th_fast: 7
+  
+  segmentation:
+    enabled: true
+    model_path: "${paths.onnx_model}"
+    conf_threshold: 0.3
+    
+visualization:
+  enabled: true
+  backend_port: 8080
+  websocket_url: "ws://localhost:${visualization.backend_port}/ws/slam"
+```
+
+#### 阶段 8.8：一键启动器（2-3天）
+1. 开发Python启动器（跨平台）
+2. 自动检测环境和依赖
+3. 管理进程生命周期
+4. 自动打开浏览器
+
+**启动器功能**：
+- 环境检查（Python、OpenCV、ONNX Runtime）
+- 自动启动可视化后端
+- 自动启动SLAM系统
+- 进程监控和异常恢复
+- 日志收集和显示
+- 浏览器自动打开
+
+#### 阶段 8.9：系统监控面板（2-3天）
+1. 实时显示系统状态
+2. 性能指标收集（FPS、内存、CPU）
+3. 错误日志显示
+4. 点云和地图可视化
+
+**监控指标**：
+- 系统运行状态（运行中/停止/错误）
+- 当前帧率（FPS）
+- 已处理帧数
+- 点云数量
+- 内存使用
+- CPU使用率
+- 语义分割耗时
+- 跟踪耗时
+
+#### 阶段 8.11：USB摄像头实时建模（3-5天）
+1. 开发USB摄像头采集模块（OpenCV cv::VideoCapture）
+2. 支持RGB+深度摄像头（RealSense D435i等）
+3. 在线相机标定工具
+4. 实时语义分割+点云生成
+5. 点云地图保存和导出
+
+**技术方案**：
+- **纯RGB摄像头**：单目SLAM（无深度信息，仅轨迹估计）
+- **RGB-D摄像头**：RGB-D SLAM（完整3D重建）
+- **标定**：使用OpenCV相机标定工具，生成YAML配置文件
+- **实时处理**：与数据集模式相同的处理流程，只是数据源改为摄像头
+
+**硬件要求**：
+- 普通USB摄像头：仅支持单目SLAM（无深度）
+- Intel RealSense D435i/D455：RGB-D+IMU（完整功能）
+- Azure Kinect：RGB-D（高质量深度）
+- 其他RGB-D摄像头：需适配驱动
+
+**实现步骤**：
+1. 创建`rgbd_camera.cc` - USB摄像头采集入口
+2. 添加相机标定配置文件生成工具
+3. 修改`start_system.bat`支持摄像头模式
+4. 添加点云地图保存功能（PLY格式）
+5. 编写摄像头使用文档
+
+#### 阶段 8.10：安装包构建（2-3天）
+1. Windows安装包（Inno Setup）
+2. Linux安装包（deb/rpm）
+3. 自动下载依赖（ONNX Runtime、OpenCV）
+4. 环境变量配置
+5. 开始菜单快捷方式
+
+### 预期效果
+
+| 指标 | 当前 | 目标 |
+|------|------|------|
+| 编译步骤 | 4-5步手动编译 | 1键编译 |
+| 配置复杂度 | 分散在多个文件 | 统一配置文件 |
+| 启动步骤 | 3步手动启动 | 1键启动 |
+| 新用户上手时间 | 2-3小时 | 10分钟 |
+| 系统可观测性 | 无 | 实时监控面板 |
+
+### 风险与挑战
+1. **跨平台兼容性**：Windows/Linux/macOS差异
+2. **依赖管理**：ONNX Runtime、OpenCV版本兼容
+3. **性能开销**：监控面板对SLAM性能的影响
+4. **安装包大小**：包含所有依赖后的体积
+
+### 时间估算
+- 阶段 8.6-8.10：总计 8-13 天
+- 可分阶段交付，每阶段独立可用

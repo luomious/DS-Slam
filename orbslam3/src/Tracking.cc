@@ -1567,21 +1567,12 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
                 cv::resize(segMask, segMask, imDepth.size(), 0, 0, cv::INTER_NEAREST);
             }
             
-            int maskPixels = cv::countNonZero(segMask);
-            std::cout << "[DS-SLAM M3] Mask pixels: " << maskPixels 
-                      << " / " << segMask.total() 
-                      << " (" << (100.0 * maskPixels / segMask.total()) << "%)" << std::endl;
-            mImGray.setTo(cv::Scalar(0), segMask);
+            // Apply mask to depth image for mapping
             imDepth.copyTo(depthForMapping);
             depthForMapping.setTo(cv::Scalar(0), segMask);
             
-            std::cout << "[DS-SLAM M3] Mask size: " << segMask.size() 
-                      << ", Depth size: " << depthForMapping.size() 
-                      << ", ImGray size: " << mImGray.size() << std::endl;
-        }
-        else
-        {
-            std::cout << "[DS-SLAM M3] Mask empty or size mismatch!" << std::endl;
+            // Apply mask to grayscale image for feature extraction
+            mImGray.setTo(cv::Scalar(0), segMask);
         }
     }
     else
@@ -1591,6 +1582,11 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
             std::cout << "[DS-SLAM M3] Segmentator not available or invalid! (frame #" << m3_warn_count << ")" << std::endl;
     }
 #endif
+
+    // If depthForMapping is empty (segmentator disabled), use original depth image
+    if (depthForMapping.empty()) {
+        depthForMapping = imDepth;
+    }
 
     if (mSensor == System::RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera);
