@@ -6,13 +6,14 @@
 
 ## 📊 项目状态
 
-**最新版本**: `milestone-slam-testing` (2026-05-27)
+**最新版本**: `milestone-system-integration` (2026-05-27)
 **构建状态**: ✅ ORB-SLAM3 + slam-system 编译完成（WSL2 + Windows MinGW）
 **测试状态**: ✅ 4个 TUM 数据集测试通过（M3+M4组合动态场景改善94-96%）
 **精度评估**: ✅ EVO 评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 **可视化系统**: ✅ Web 可视化运行正常（FastAPI + Three.js + WebSocket）
 **端口配置**: ⚠️ 后端默认端口已改为 8080（Windows 保留 8000-8080 端口）
 **最新修复**: ✅ CMakeLists.txt硬编码路径修复（2026-05-27）- 使用相对路径和环境变量，支持跨平台编译
+**系统整合**: 🚧 阶段8进行中 - 统一构建、配置管理、一键启动、实时监控、USB摄像头支持
 
 ## 项目结构
 
@@ -198,7 +199,11 @@ evo_ape tum groundtruth.txt CameraTrajectory.txt -va
 
 ## 更新日志
 
-### 2026-05-27 项目清理与跨平台编译修复
+### 2026-05-27 系统整合方案与USB摄像头支持
+- **系统整合方案**：
+  - 阶段8.1-8.5完成：项目清理、Git历史清理、CMakeLists修复、调试优化、空指针修复
+  - 阶段8.6-8.10规划：统一构建、配置管理、一键启动、实时监控、安装包构建
+  - 阶段8.11新增：USB摄像头实时建模支持
 - **CMakeLists.txt修复**：
   - 移除所有Windows绝对路径硬编码（E:/VSCode/...）
   - 使用相对路径和环境变量（$ENV{ONNXRUNTIME_ROOT}、$ENV{BOOST_ROOT}）
