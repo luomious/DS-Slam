@@ -309,6 +309,26 @@ if(realsense2_FOUND)
     target_link_libraries(rgbd_realsense_D435i ${PROJECT_NAME})
 endif()
 
+# USB Camera Test
+add_executable(test_usb_camera
+        Examples/RGB-D/test_usb_camera.cc)
+target_link_libraries(test_usb_camera ${OpenCV_LIBS})
+
+# USB Camera RGB-D SLAM
+add_executable(rgbd_camera
+        Examples/RGB-D/rgbd_camera.cc)
+if(WIN32)
+    target_link_libraries(rgbd_camera ${PROJECT_NAME} g2o ${OpenCV_LIBS} winhttp)
+else()
+    target_link_libraries(rgbd_camera ${PROJECT_NAME} g2o ${OpenCV_LIBS} curl)
+endif()
+if(DS_SLAM_AVAILABLE)
+    target_link_libraries(rgbd_camera ${SEGMENTATOR_LIB} ${STATICMAPPER_LIB} ${VISUALIZER_LIB} ${OpenCV_LIBS})
+    if(EXISTS "${ORT_LIB}")
+        target_link_libraries(rgbd_camera ${ORT_LIB})
+    endif()
+endif()
+
 
 # RGB-D inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/RGB-D-Inertial)
