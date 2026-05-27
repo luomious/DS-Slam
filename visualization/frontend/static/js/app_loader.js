@@ -163,10 +163,14 @@
             this.controls.dampingFactor = 0.05;
             
             // Grid
-            this.scene.add(new THREE.GridHelper(10, 20, 0x30363d, 0x21262d));
+            this.gridHelper = new THREE.GridHelper(10, 20, 0x30363d, 0x21262d);
+            this.gridHelper.visible = false;
+            this.scene.add(this.gridHelper);
             
             // Axes
-            this.scene.add(new THREE.AxesHelper(0.3));
+            this.axesHelper = new THREE.AxesHelper(0.3);
+            this.axesHelper.visible = false;
+            this.scene.add(this.axesHelper);
             
             // Lights
             this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -180,8 +184,9 @@
             this.trajPositions = new Float32Array(maxPts * 3);
             this.trajGeo = trajGeo.setAttribute('position', new THREE.BufferAttribute(this.trajPositions, 3));
             trajGeo.setDrawRange(0, 0);
-            const trajMat = new THREE.LineBasicMaterial({ color: 0xffcc00, linewidth: 2 });
+            const trajMat = new THREE.LineBasicMaterial({ color: 0x00e5ff, linewidth: 2 });
             this.trajLine = new THREE.Line(trajGeo, trajMat);
+            this.trajLine.visible = false;
             this.scene.add(this.trajLine);
             this.trajCount = 0;
             
@@ -213,7 +218,7 @@
             
             // Camera marker
             const camGeo = new THREE.ConeGeometry(0.02, 0.06, 4);
-            const camMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+            const camMat = new THREE.MeshBasicMaterial({ color: 0x00ff88 });
             this.cameraMarker = new THREE.Mesh(camGeo, camMat);
             this.scene.add(this.cameraMarker);
             
@@ -292,28 +297,35 @@
             this.mapPoints.geometry.attributes.color.needsUpdate = true;
         }
         
-        updateDensePoints(coords) {
+        updateDensePoints(coords, colors) {
             if (!this.enabled) return;
             const n = Math.floor(coords.length / 3);
             const maxN = Math.min(n, this.densePositions.length / 3);
+            const hasColors = colors && colors.length >= n;
             for (let i = 0; i < maxN; i++) {
                 // Z-up to Y-up conversion
                 this.densePositions[i*3] = coords[i*3];
                 this.densePositions[i*3+1] = coords[i*3+2];
                 this.densePositions[i*3+2] = -coords[i*3+1];
-                // Height-based coloring (blue=low, green=mid, warm=high)
-                const h = coords[i*3+1]; // original Y (up)
-                const t = Math.max(0, Math.min(1, (h + 0.5) / 2.5)); // normalize [-0.5, 2.0] → [0,1]
-                this.denseColors[i*3] = 0.2 + 0.8 * t;        // R: warm for high
-                this.denseColors[i*3+1] = 0.3 + 0.5 * (1 - Math.abs(t - 0.5) * 2); // G: peak at mid
-                this.denseColors[i*3+2] = 0.2 + 0.8 * (1 - t); // B: cool for low
+                // Color: use RGB from dataset if available, fallback to height colormap
+                if (hasColors) {
+                    this.denseColors[i*3] = colors[i*3];
+                    this.denseColors[i*3+1] = colors[i*3+1];
+                    this.denseColors[i*3+2] = colors[i*3+2];
+                } else {
+                    const h = coords[i*3+1];
+                    const t = Math.max(0, Math.min(1, (h + 0.5) / 2.5));
+                    this.denseColors[i*3] = 0.2 + 0.8 * t;
+                    this.denseColors[i*3+1] = 0.3 + 0.5 * (1 - Math.abs(t - 0.5) * 2);
+                    this.denseColors[i*3+2] = 0.2 + 0.8 * (1 - t);
+                }
             }
             this.densePtCount = maxN;
             this.densePoints.geometry.setDrawRange(0, maxN);
             this.densePoints.geometry.attributes.position.needsUpdate = true;
             this.densePoints.geometry.attributes.color.needsUpdate = true;
             
-            // Hide placeholder if points rendered
+            // Hide placeholder if points rendered & show scene controls
             if (maxN > 100) {
                 const ph = this.container.querySelector('.placeholder');
                 if (ph) ph.classList.add('hidden');
@@ -349,6 +361,32 @@
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(w, h);
         }
+        
+        clearTrajectory() {
+            this.trajCount = 0;
+            this.trajPositions.fill(0);
+            this.trajLine.geometry.setDrawRange(0, 0);
+            this.trajLine.geometry.attributes.position.needsUpdate = true;
+            this.trajLine.visible = false;
+        }
+        
+        clearMapPoints() {
+            this.mapPtCount = 0;
+            this.mapPositions.fill(0);
+            this.mapColors.fill(0);
+            this.mapPoints.geometry.setDrawRange(0, 0);
+            this.mapPoints.geometry.attributes.position.needsUpdate = true;
+            this.mapPoints.geometry.attributes.color.needsUpdate = true;
+        }
+        
+        clearDensePoints() {
+            this.densePtCount = 0;
+            this.densePositions.fill(0);
+            this.denseColors.fill(0);
+            this.densePoints.geometry.setDrawRange(0, 0);
+            this.densePoints.geometry.attributes.position.needsUpdate = true;
+            this.densePoints.geometry.attributes.color.needsUpdate = true;
+        }
     }
     
     // ===== Handle messages =====
@@ -359,13 +397,41 @@
         } else if (data.type === 'map_points_update') {
             pendingMapPoints = data;
         } else if (data.type === 'dense_points_update') {
+            const n = data.coords ? Math.floor(data.coords.length / 3) : 0;
+            console.log('[PointCloud] Received dense_points_update:', n, 'points, has_colors:', !!data.colors);
             if (data.coords && threeRenderer && threeRenderer.enabled) {
-                threeRenderer.updateDensePoints(data.coords);
+                threeRenderer.updateDensePoints(data.coords, data.colors);
                 const infoEl = document.getElementById('pointcloud-info');
                 if (infoEl && data.point_count) {
                     infoEl.textContent = data.point_count.toLocaleString() + ' dense points';
                 }
             }
+        } else if (data.type === 'trajectory_update') {
+            const n = data.poses ? data.poses.length : 0;
+            console.log('[Trajectory] Received trajectory_update:', n, 'poses');
+            if (threeRenderer && threeRenderer.enabled) {
+                threeRenderer.clearTrajectory();
+                if (n > 0) {
+                    threeRenderer.addTrajectory(data.poses);
+                    keyframeCount = n;
+                    dataLoaded.trajectory = true;
+                    updateProgress();
+                }
+            }
+            setStatus('Trajectory: ' + n + ' poses');
+        } else if (data.type === 'scene_reset') {
+            console.log('[Scene] Received scene_reset, clearing all data');
+            if (threeRenderer && threeRenderer.enabled) {
+                threeRenderer.clearTrajectory();
+                threeRenderer.clearMapPoints();
+                threeRenderer.clearDensePoints();
+            }
+            dataLoaded.trajectory = false;
+            dataLoaded.mapPoints = false;
+            keyframeCount = 0;
+            mapPointCount = 0;
+            updateProgress();
+            setStatus('Scene cleared');
         } else if (data.type === 'gridmap_update' && data.image_base64) {
             const canvas = document.getElementById('grid-canvas');
             if (canvas) {
@@ -571,7 +637,7 @@
                 const data = await resp.json();
                 console.log('[DensePoints] Data:', data.point_count, 'pts, threeRenderer=', !!threeRenderer, 'enabled=', threeRenderer?.enabled);
                 if (data.coords && data.point_count > 0 && threeRenderer && threeRenderer.enabled) {
-                    threeRenderer.updateDensePoints(data.coords);
+                    threeRenderer.updateDensePoints(data.coords, data.colors);
                     threeRenderer._autoScaleGrid();
                     console.log('[DensePoints] UPDATED', data.point_count, 'points, camera adjusted');
                     dataLoaded.mapPoints = true;
@@ -681,6 +747,12 @@
                 }
                 if (data.datasets.length === 0) {
                     sel.innerHTML = '<option value="">No datasets</option>';
+                } else {
+                    // Auto-select and load first dataset on page load
+                    sel.value = data.datasets[0].name;
+                    console.log('[Dataset] Auto-loading first dataset:', data.datasets[0].name);
+                    // Trigger the change event to load PLY and start playback
+                    sel.dispatchEvent(new Event('change'));
                 }
             }
         } catch(e) { console.warn('[Datasets] load failed:', e); }
@@ -705,12 +777,85 @@
                 const resp = await fetch('/api/select_dataset', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({dataset: selectedDataset})
+                    body: JSON.stringify({dataset: selectedDataset, auto_playback: true, fps: 10})
                 });
                 
                 if (resp.ok) {
                     const data = await resp.json();
                     console.log('[Dataset] Switched successfully:', data);
+                    
+                    // Also fetch 3D data via HTTP to ensure scene updates even if WS is not connected
+                    console.log('[Dataset] Fetching 3D data via HTTP...');
+                    
+                    // Fetch trajectory
+                    try {
+                        const trajResp = await fetch('/api/trajectory');
+                        if (trajResp.ok) {
+                            const trajData = await trajResp.json();
+                            console.log('[Dataset] Trajectory loaded:', trajData.poses ? trajData.poses.length : 0, 'poses');
+                            if (threeRenderer && threeRenderer.enabled && trajData.poses && trajData.poses.length > 0) {
+                                threeRenderer.clearTrajectory();
+                                threeRenderer.addTrajectory(trajData.poses);
+                                keyframeCount = trajData.poses.length;
+                                dataLoaded.trajectory = true;
+                                updateProgress();
+                            }
+                        }
+                    } catch(e) { console.warn('[Dataset] Failed to fetch trajectory:', e); }
+                    
+                    // Fetch dense points
+                    try {
+                        const denseResp = await fetch('/api/dense_points');
+                        if (denseResp.ok) {
+                            const denseData = await denseResp.json();
+                            const n = denseData.coords ? Math.floor(denseData.coords.length / 3) : 0;
+                            console.log('[Dataset] Dense points loaded:', n, 'points');
+                            if (threeRenderer && threeRenderer.enabled && denseData.coords && n > 0) {
+                                threeRenderer.clearDensePoints();
+                                threeRenderer.updateDensePoints(denseData.coords, denseData.colors);
+                                const infoEl = document.getElementById('pointcloud-info');
+                                if (infoEl) {
+                                    infoEl.textContent = n.toLocaleString() + ' dense points';
+                                }
+                            } else if (threeRenderer && threeRenderer.enabled) {
+                                threeRenderer.clearDensePoints();
+                                const infoEl = document.getElementById('pointcloud-info');
+                                if (infoEl) {
+                                    infoEl.textContent = 'No dense points';
+                                }
+                            }
+                        }
+                    } catch(e) { console.warn('[Dataset] Failed to fetch dense points:', e); }
+                    
+                    // Fetch gridmap
+                    try {
+                        const gridResp = await fetch('/api/gridmap');
+                        if (gridResp.ok) {
+                            const gridData = await gridResp.json();
+                            if (gridData.image_base64) {
+                                console.log('[Dataset] Gridmap loaded');
+                                const canvas = document.getElementById('grid-canvas');
+                                if (canvas) {
+                                    const ctx = canvas.getContext('2d');
+                                    const container = canvas.parentElement;
+                                    const w = container.clientWidth || 320;
+                                    const h = container.clientHeight || 240;
+                                    canvas.width = w;
+                                    canvas.height = h;
+                                    const img = new Image();
+                                    img.onload = () => {
+                                        ctx.clearRect(0, 0, w, h);
+                                        const scale = Math.min(w/img.width, h/img.height);
+                                        const tw = Math.floor(img.width*scale), th = Math.floor(img.height*scale);
+                                        const ox = Math.floor((w-tw)/2), oy = Math.floor((h-th)/2);
+                                        ctx.drawImage(img, ox, oy, tw, th);
+                                    };
+                                    img.src = 'data:image/png;base64,' + gridData.image_base64;
+                                }
+                            }
+                        }
+                    } catch(e) { console.warn('[Dataset] Failed to fetch gridmap:', e); }
+                    
                     if (btn) {
                         btn.textContent = 'Test Frame';
                         btn.disabled = false;
@@ -734,7 +879,7 @@
         });
     }
     
-    async function loadTestFrame() {
+    window.loadTestFrame = async function loadTestFrame() {
         try {
             const btn = document.getElementById('btn-load-test');
             btn.textContent = 'Loading...';
@@ -760,11 +905,289 @@
         }
     }
     
-    function resetView() {
+    window.resetView = function resetView() {
         if (threeRenderer && threeRenderer.enabled) {
             threeRenderer._autoScaleGrid();
             console.log('[ResetView] Camera reset to fit data');
         }
     }
+    
+    window.skipPlaybackGenerate = async function skipPlaybackGenerate() {
+        try {
+            const btn = document.getElementById('btn-skip-playback');
+            btn.textContent = '⏳ Generating...';
+            btn.disabled = true;
+            
+            console.log('[SkipPlayback] Starting direct result generation...');
+            
+            // Stop any ongoing playback
+            const stopResp = await fetch('/api/stop_playback', {method: 'POST'});
+            console.log('[SkipPlayback] Stopped playback:', await stopResp.json());
+            
+            // Get current dataset
+            const sel = document.getElementById('dataset-select');
+            const currentDataset = sel ? sel.value : '';
+            if (!currentDataset) {
+                alert('Please select a dataset first!');
+                btn.textContent = '⚡ Skip Playback';
+                btn.disabled = false;
+                return;
+            }
+            
+            // Switch dataset without auto_playback to load all 3D data
+            console.log('[SkipPlayback] Loading 3D data for:', currentDataset);
+            const resp = await fetch('/api/select_dataset', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({dataset: currentDataset, auto_playback: false})
+            });
+            
+            if (resp.ok) {
+                const data = await resp.json();
+                console.log('[SkipPlayback] Dataset loaded:', data);
+                
+                // Fetch trajectory
+                const trajResp = await fetch('/api/trajectory');
+                if (trajResp.ok) {
+                    const trajData = await trajResp.json();
+                    console.log('[SkipPlayback] Trajectory loaded:', trajData.poses ? trajData.poses.length : 0, 'poses');
+                    if (threeRenderer && threeRenderer.enabled && trajData.poses && trajData.poses.length > 0) {
+                        threeRenderer.clearTrajectory();
+                        threeRenderer.addTrajectory(trajData.poses);
+                        keyframeCount = trajData.poses.length;
+                        dataLoaded.trajectory = true;
+                    }
+                }
+                
+                // Fetch dense points
+                const denseResp = await fetch('/api/dense_points');
+                if (denseResp.ok) {
+                    const denseData = await denseResp.json();
+                    const n = denseData.coords ? Math.floor(denseData.coords.length / 3) : 0;
+                    console.log('[SkipPlayback] Dense points loaded:', n, 'points');
+                    if (threeRenderer && threeRenderer.enabled && denseData.coords && n > 0) {
+                        threeRenderer.updateDensePoints(denseData.coords, denseData.colors);
+                        const infoEl = document.getElementById('pointcloud-info');
+                        if (infoEl) {
+                            infoEl.textContent = n.toLocaleString() + ' dense points';
+                        }
+                    }
+                }
+                
+                // Fetch gridmap
+                const gridResp = await fetch('/api/gridmap');
+                if (gridResp.ok) {
+                    const gridData = await gridResp.json();
+                    if (gridData.image_base64) {
+                        console.log('[SkipPlayback] Gridmap loaded');
+                        const canvas = document.getElementById('grid-canvas');
+                        if (canvas) {
+                            const ctx = canvas.getContext('2d');
+                            const container = canvas.parentElement;
+                            const w = container.clientWidth || 320;
+                            const h = container.clientHeight || 240;
+                            canvas.width = w;
+                            canvas.height = h;
+                            const img = new Image();
+                            img.onload = () => {
+                                ctx.clearRect(0, 0, w, h);
+                                const scale = Math.min(w/img.width, h/img.height);
+                                const tw = Math.floor(img.width*scale), th = Math.floor(img.height*scale);
+                                const ox = Math.floor((w-tw)/2), oy = Math.floor((h-th)/2);
+                                ctx.drawImage(img, ox, oy, tw, th);
+                            };
+                            img.src = 'data:image/png;base64,' + gridData.image_base64;
+                        }
+                    }
+                }
+                
+                // Load a test frame for RGB/YOLO panels
+                const frameResp = await fetch('/api/push_test_frame', {method: 'POST'});
+                if (frameResp.ok) {
+                    const lfr = await fetch('/api/latest_frame');
+                    if (lfr.ok) {
+                        const lfd = await lfr.json();
+                        if (lfd.frame) pendingFrame = lfd.frame;
+                    }
+                }
+                
+                console.log('[SkipPlayback] Result generation complete!');
+                btn.textContent = '✅ Done!';
+                setTimeout(() => { btn.textContent = '⚡ Skip Playback'; btn.disabled = false; }, 2000);
+            } else {
+                console.error('[SkipPlayback] Failed to load dataset');
+                btn.textContent = ' Error!';
+                setTimeout(() => { btn.textContent = '⚡ Skip Playback'; btn.disabled = false; }, 2000);
+            }
+        } catch(e) {
+            console.error('[SkipPlayback] Error:', e);
+            const btn = document.getElementById('btn-skip-playback');
+            btn.textContent = '❌ Error!';
+            setTimeout(() => { btn.textContent = ' Skip Playback'; btn.disabled = false; }, 2000);
+        }
+    }
+
+    // ===== Scene Overlay Controls (inspired by 3D-point-cloud-visualizer) =====
+    window.setScenePtSize = function(val) {
+        // Slider 0.5-80 -> size 0.005-0.8 world units
+        const size = val / 100;
+        if (threeRenderer && threeRenderer.enabled) {
+            if (threeRenderer.densePoints) {
+                threeRenderer.densePoints.material.size = size;
+                threeRenderer.densePoints.material.needsUpdate = true;
+            }
+            if (threeRenderer.mapPoints) {
+                threeRenderer.mapPoints.material.size = size * 1.5;
+                threeRenderer.mapPoints.material.needsUpdate = true;
+            }
+        }
+        const el = document.getElementById('scene-pt-size-val');
+        if (el) el.textContent = size.toFixed(3);
+    };
+
+    window.setSceneOpacity = function(val) {
+        const opacity = parseFloat(val);
+        if (threeRenderer && threeRenderer.enabled) {
+            if (threeRenderer.densePoints) {
+                threeRenderer.densePoints.material.opacity = opacity;
+                threeRenderer.densePoints.material.transparent = opacity < 1;
+                threeRenderer.densePoints.material.needsUpdate = true;
+            }
+            if (threeRenderer.mapPoints) {
+                threeRenderer.mapPoints.material.opacity = opacity;
+                threeRenderer.mapPoints.material.transparent = opacity < 1;
+                threeRenderer.mapPoints.material.needsUpdate = true;
+            }
+        }
+        const el = document.getElementById('scene-opacity-val');
+        if (el) el.textContent = opacity.toFixed(2);
+    };
+
+    window.setSceneSizeAttenuation = function(enabled) {
+        if (threeRenderer && threeRenderer.enabled) {
+            if (threeRenderer.densePoints) {
+                threeRenderer.densePoints.material.sizeAttenuation = enabled;
+                threeRenderer.densePoints.material.needsUpdate = true;
+            }
+            if (threeRenderer.mapPoints) {
+                threeRenderer.mapPoints.material.sizeAttenuation = enabled;
+                threeRenderer.mapPoints.material.needsUpdate = true;
+            }
+        }
+    };
+
+    window.setSceneBg = function(theme) {
+        if (threeRenderer && threeRenderer.enabled) {
+            if (theme === 'dark') {
+                threeRenderer.scene.background = new threeRenderer.THREE.Color(0x0d1117);
+            } else {
+                threeRenderer.scene.background = new threeRenderer.THREE.Color(0xf0f2f5);
+            }
+        }
+    };
+
+    // Scene interaction mode: 'nav' = orbit/pan, 'pick' = click to pick point
+    let _sceneInteractionMode = 'nav';
+    let _sceneRaycaster = null;
+    let _sceneMouse = null;
+    let _scenePickedMarker = null;
+
+    window.setSceneMode = function(mode) {
+        _sceneInteractionMode = mode;
+        const navBtn = document.getElementById('mode-nav-btn');
+        const pickBtn = document.getElementById('mode-pick-btn');
+        const pickingPanel = document.getElementById('picking-info');
+        const cont = threeRenderer ? threeRenderer.container : null;
+
+        if (mode === 'pick') {
+            if (navBtn) { navBtn.style.background = '#30363d'; navBtn.style.color = '#c9d1d9'; }
+            if (pickBtn) { pickBtn.style.background = '#1f6feb'; pickBtn.style.color = '#fff'; }
+            // Init raycaster if needed
+            if (!_sceneRaycaster && threeRenderer && threeRenderer.THREE) {
+                const THREE = threeRenderer.THREE;
+                _sceneRaycaster = new THREE.Raycaster();
+                _sceneMouse = new THREE.Vector2();
+                _scenePickedMarker = new THREE.Points(
+                    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0,0,0]), 3)),
+                    new THREE.PointsMaterial({ color: 0xff4444, size: 0.05 })
+                );
+                threeRenderer.scene.add(_scenePickedMarker);
+            }
+            if (cont && !cont._scenePickListener) {
+                cont._scenePickListener = true;
+                cont.addEventListener('click', _onSceneClick);
+            }
+        } else {
+            if (navBtn) { navBtn.style.background = '#1f6feb'; navBtn.style.color = '#fff'; }
+            if (pickBtn) { pickBtn.style.background = '#30363d'; pickBtn.style.color = '#c9d1d9'; }
+            if (pickingPanel) pickingPanel.style.display = 'none';
+        }
+    };
+
+    function _onSceneClick(event) {
+        if (_sceneInteractionMode !== 'pick' || !threeRenderer || !threeRenderer.enabled) return;
+        const rect = threeRenderer.renderer.domElement.getBoundingClientRect();
+        _sceneMouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        _sceneMouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        _sceneRaycaster.setFromCamera(_sceneMouse, threeRenderer.camera);
+
+        const objects = [];
+        if (threeRenderer.densePoints && threeRenderer.densePtCount > 0) objects.push(threeRenderer.densePoints);
+        if (threeRenderer.mapPoints && threeRenderer.mapPtCount > 0) objects.push(threeRenderer.mapPoints);
+
+        _sceneRaycaster.params.Points.threshold = 0.1;
+        const intersects = _sceneRaycaster.intersectObjects(objects, true);
+
+        const pickingPanel = document.getElementById('picking-info');
+        const pickingData = document.getElementById('picking-data');
+        if (intersects.length > 0) {
+            const i = intersects[0];
+            const localPos = i.point;
+            if (pickingPanel && pickingData) {
+                let colorInfo = 'N/A';
+                if (i.object.geometry && i.object.geometry.attributes.color) {
+                    const c = i.object.geometry.attributes.color;
+                    if (i.index !== undefined) {
+                        const r = Math.floor(c.getX(i.index) * 255);
+                        const g = Math.floor(c.getY(i.index) * 255);
+                        const b = Math.floor(c.getZ(i.index) * 255);
+                        colorInfo = 'RGB(' + r + ',' + g + ',' + b + ')';
+                    }
+                }
+                pickingData.innerHTML =
+                    'XYZ: ' + localPos.x.toFixed(3) + ', ' + localPos.y.toFixed(3) + ', ' + localPos.z.toFixed(3) + '<br>' +
+                    'Color: ' + colorInfo;
+                pickingPanel.style.display = 'block';
+            }
+            if (_scenePickedMarker) {
+                _scenePickedMarker.position.copy(localPos);
+            }
+        } else {
+            if (pickingPanel) pickingPanel.style.display = 'none';
+        }
+    }
+
+    // Grid toggle
+    window.setSceneGrid = function(visible) {
+        if (threeRenderer && threeRenderer.enabled) {
+            if (threeRenderer.gridHelper) threeRenderer.gridHelper.visible = visible;
+            if (threeRenderer.axesHelper) threeRenderer.axesHelper.visible = visible;
+        }
+    };
+
+    // Trajectory toggle
+    window.setSceneTrajectory = function(visible) {
+        if (threeRenderer && threeRenderer.enabled) {
+            if (threeRenderer.trajLine) threeRenderer.trajLine.visible = visible;
+        }
+    };
+
+    // Scene controls toggle via panel header button
+    window.toggleSceneControls = function() {
+        const ctrl = document.getElementById('scene-controls');
+        if (ctrl) {
+            ctrl.style.display = ctrl.style.display === 'none' ? 'block' : 'none';
+        }
+    };
 
 })();

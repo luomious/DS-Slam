@@ -2,6 +2,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <fstream>
 #include <cmath>
+#include <iostream>
 
 StaticMapper::StaticMapper(float gridResolution, float gridRange)
     : m_resolution(gridResolution)
@@ -17,10 +18,28 @@ void StaticMapper::AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
 {
     cv::Mat Twc = Tcw.inv();
     int step = 4;
+    // Pre-allocate to avoid repeated reallocations
+    if (m_allPoints.empty()) { m_allPoints.reserve(5000000); }
+
+    // Debug: check mask
+    int filteredByMask = 0;
+    int filteredByDepth = 0;
+    int totalPoints = 0;
+    if (!mask.empty()) {
+        int maskPixels = cv::countNonZero(mask);
+        std::cout << "[StaticMapper] Mask size: " << mask.size() 
+                  << ", Mask pixels: " << maskPixels 
+                  << " / " << mask.total() 
+                  << " (" << (100.0 * maskPixels / mask.total()) << "%)" << std::endl;
+    }
 
     for (int v = 0; v < depth.rows; v += step) {
         for (int u = 0; u < depth.cols; u += step) {
-            if (!mask.empty() && mask.at<uint8_t>(v, u) > 0) continue;
+            totalPoints++;
+            if (!mask.empty() && mask.at<uint8_t>(v, u) > 0) {
+                filteredByMask++;
+                continue;
+            }
 
             float d;
             if (depth.type() == CV_16UC1) {
@@ -28,7 +47,10 @@ void StaticMapper::AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
             } else {
                 d = depth.at<float>(v, u);
             }
-            if (d <= 0.01f || d > 8.0f) continue;
+            if (d <= 0.01f || d > 8.0f) {
+                filteredByDepth++;
+                continue;
+            }
 
             float x = (u - cx) * d / fx;
             float y = (v - cy) * d / fy;
@@ -49,6 +71,11 @@ void StaticMapper::AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
             m_allPoints.push_back(pt);
         }
     }
+    std::cout << "[StaticMapper] Total sampled: " << totalPoints 
+              << ", Filtered by mask: " << filteredByMask 
+              << ", Filtered by depth: " << filteredByDepth
+              << ", Added points: " << m_allPoints.size() - (m_allPoints.capacity() - 5000000)
+              << std::endl;
     m_kfCount++;
 }
 
@@ -93,3 +120,21 @@ bool StaticMapper::ExportGridMap(const std::string& path) const
 
 size_t StaticMapper::GetPointCount() const { return m_allPoints.size(); }
 int StaticMapper::GetKeyframeCount() const { return m_kfCount; }
+
+std::vector<SimplePoint3D> StaticMapper::GetDensePointsSampled(size_t maxPts) const {
+    std::vector<SimplePoint3D> result;
+    if (m_allPoints.empty()) return result;
+
+    if (m_allPoints.size() <= maxPts) {
+        result = m_allPoints;
+        return result;
+    }
+
+    // Uniform downsampling
+    size_t sample_step = m_allPoints.size() / maxPts;
+    result.reserve(maxPts);
+    for (size_t i = 0; i < m_allPoints.size() && result.size() < maxPts; i += sample_step) {
+        result.push_back(m_allPoints[i]);
+    }
+    return result;
+}

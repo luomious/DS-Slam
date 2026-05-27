@@ -12,7 +12,7 @@ struct SimplePoint3D {
 
 class StaticMapper {
 public:
-    StaticMapper(float gridResolution = 0.05f, float gridRange = 5.0f);
+    StaticMapper(float gridResolution = 0.02f, float gridRange = 5.0f);
 
     void AddKeyframe(const cv::Mat& depth, const cv::Mat& rgb,
                      const cv::Mat& mask, const cv::Mat& Tcw,
@@ -22,6 +22,9 @@ public:
 
     bool ExportPLY(const std::string& path) const;
     bool ExportGridMap(const std::string& path) const;
+
+    // Get downsampled dense points for visualization (max maxPts)
+    std::vector<SimplePoint3D> GetDensePointsSampled(size_t maxPts = 20000) const;
 
     size_t GetPointCount() const;
     int GetKeyframeCount() const;

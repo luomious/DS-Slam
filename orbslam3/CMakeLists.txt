@@ -67,12 +67,17 @@ message(STATUS "Eigen3 found at: ${EIGEN3_INCLUDE_DIR}")
 set(EIGEN3_VERSION 5.0.1)
 
 # Pangolin - skip if not found (optional)
-# FORCE DISABLE for headless WSL2 testing
-set(Pangolin_FOUND FALSE)
-find_package(Pangolin QUIET)
-if(NOT Pangolin_FOUND)
-    message(STATUS "Pangolin not found - disabling visualization")
+# For headless WSL2 testing, set DISABLE_PANGOLIN=ON to skip
+option(DISABLE_PANGOLIN "Disable Pangolin visualization" ON)
+if(DISABLE_PANGOLIN)
+    message(STATUS "Pangolin disabled - headless mode")
     add_definitions(-DNO_PANGOLIN=1 -DHAS_PANGOLIN=0)
+else()
+    find_package(Pangolin QUIET)
+    if(NOT Pangolin_FOUND)
+        message(STATUS "Pangolin not found - disabling visualization")
+        add_definitions(-DNO_PANGOLIN=1 -DHAS_PANGOLIN=0)
+    endif()
 endif()
 
 # realsense2 - optional
@@ -251,7 +256,7 @@ target_link_libraries(${PROJECT_NAME}
 ${EIGEN3_LIBS}
 ${DBOW2_LIB}
 g2o
--lboost_serialization
+-lboost_serialization-mt
 -lcrypto
 ${OpenCV_LIBS}
 )
@@ -297,7 +302,7 @@ else()
     target_link_libraries(rgbd_tum ${PROJECT_NAME} g2o ${OpenCV_LIBS} curl)
 endif()
 if(DS_SLAM_AVAILABLE)
-    target_link_libraries(rgbd_tum ${SEGMENTATOR_LIB} ${STATICMAPPER_LIB} ${VISUALIZER_LIB})
+    target_link_libraries(rgbd_tum ${SEGMENTATOR_LIB} ${STATICMAPPER_LIB} ${VISUALIZER_LIB} ${OpenCV_LIBS})
     if(EXISTS "${ORT_LIB}")
         target_link_libraries(rgbd_tum ${ORT_LIB})
     endif()

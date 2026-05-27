@@ -12,6 +12,7 @@
 **精度评估**: ✅ EVO 评估完成（静态 RMSE 1.06cm，动态 RMSE 1.58cm）
 **可视化系统**: ✅ Web 可视化运行正常（FastAPI + Three.js + WebSocket）
 **端口配置**: ⚠️ 后端默认端口已改为 8080（Windows 保留 8000-8080 端口）
+**最新修复**: ✅ 掩码尺寸自适应修复（2026-05-26）- 确保语义分割掩码与深度图像尺寸匹配，正确过滤人像点云
 
 ## 项目结构
 
@@ -194,6 +195,29 @@ evo_ape tum groundtruth.txt CameraTrajectory.txt -va
 - **M4 FilterEpipolar 需优化**：当前 M4-only 比基线差 58.6%，参数调优进行中
 - **YAML 嵌套格式**：OpenCV FileStorage 的 `node["child"]` 读取方式要求 YAML 使用嵌套格式而非平面键名
 - **Windows 端口保留**：Hyper-V/WSL2 保留 8000-8080 端口，后端已改为 8080。如需使用其他端口，修改 `visualization/backend/main.py` 中的 `PORT` 配置
+
+## 更新日志
+
+### 2026-05-26 掩码尺寸自适应修复
+- **问题**：语义分割生成的掩码尺寸与深度图像不一致，导致人像点云未被正确过滤
+- **修复**：
+  - 在 Tracking.cc 中添加掩码尺寸检查和自动调整逻辑
+  - 使用 `cv::resize` 将掩码调整为深度图像尺寸（最近邻插值）
+  - 修改掩码应用对象从 `imDepth` 改为 `depthForMapping`，确保建图数据被正确过滤
+- **效果**：确保所有数据集的人像点云被正确过滤，3D点云地图质量显著提升
+
+### 2026-05-20 系统优化与文档完善
+- M4 极线约束参数调优：ratio 0.85→0.75, threshold 3.0→1.5px
+- SlamVisualizer 自动禁用机制（连续5次POST失败后禁用）
+- WinHTTP 超时配置优化
+- 多数据集支持（4个TUM数据集）
+- Web可视化系统完善（前端GUI、数据集切换、动态场景信息显示）
+
+### 2026-05-18 可视化系统集成
+- FastAPI + Three.js + WebSocket 完整可视化链路
+- 实时3D点云渲染 + 2D栅格地图显示
+- YOLO分割结果可视化
+- 19个WebSocket客户端连接测试通过
 
 ## 参考论文
 

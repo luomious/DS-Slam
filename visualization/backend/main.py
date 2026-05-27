@@ -8,6 +8,7 @@ import json
 import time
 import math
 import os
+import asyncio
 from pathlib import Path
 from typing import Any, List
 
@@ -393,7 +394,7 @@ OUTPUT_DIR = PROJECT_ROOT / "orbslam3" / "Examples" / "RGB-D" / "output"
 
 # Configuration
 HOST = "0.0.0.0"
-PORT = 8080  # Changed from 8000/8001 (Windows may reserve ports 8000-8080)
+PORT = 8081  # Changed from 8080 (port may be occupied by previous process)
 WS_PATH = "/ws/slam"
 
 
@@ -405,6 +406,7 @@ def create_app() -> FastAPI:
     app.state.max_buffer = 100
     app.state.latest_map_points: list = []  # Store latest map point coords for new clients
     app.state.latest_dense_points: list = []  # Dense point cloud coords for visualization
+    app.state.latest_dense_colors: list = []  # Dense point cloud RGB colors [r,g,b,r,g,b,...] normalized 0-1
     app.state.gridmap_dirty: bool = True  # [PATCHED] Flag to regenerate gridmap
     app.state.gridmap_cache_b64: str = ""  # Cached gridmap base64 to avoid regenerating every request
     app.state.trajectory_poses: list = []  # Auto-loaded trajectory poses
@@ -423,8 +425,13 @@ def create_app() -> FastAPI:
     # ====== Auto-load PLY + Trajectory on startup ======
     def _auto_load_ply_and_trajectory():
         """Load PLY and trajectory from disk into app.state on startup.
-        This ensures data is available immediately on page refresh."""
-        # Load trajectory
+        This ensures data is available immediately on page refresh.
+        
+        NOTE: We only load trajectory here, NOT PLY. PLY files are loaded
+        per-dataset when the user selects a dataset, to ensure the correct
+        point cloud is displayed for each dataset.
+        """
+        # Load trajectory (global fallback for initial display)
         traj_candidates = [
             OUTPUT_DIR / "CameraTrajectory.txt",
             PROJECT_ROOT / "orbslam3" / "Examples" / "RGB-D" / "CameraTrajectory.txt",
@@ -457,60 +464,9 @@ def create_app() -> FastAPI:
                 except Exception as e:
                     print(f"[AUTO-LOAD] Trajectory failed: {e}")
         
-        # Load PLY (downsampled)
-        ply_candidates = [
-            OUTPUT_DIR / "maps" / "static_map.ply",
-            PROJECT_ROOT / "output" / "maps" / "static_map.ply",
-        ]
-        for ply_file in ply_candidates:
-            if ply_file.exists():
-                try:
-                    coords = []
-                    downsample = 4  # Take every 4th point
-                    max_points = 100000
-                    with open(ply_file, 'r') as f:
-                        in_header = True
-                        prop_x = prop_y = prop_z = -1
-                        props = []
-                        line_count = 0
-                        for line in f:
-                            line = line.strip()
-                            if in_header:
-                                if line.startswith('property'):
-                                    parts = line.split()
-                                    props.append(parts[2])
-                                elif line == 'end_header':
-                                    in_header = False
-                                    for i, p in enumerate(props):
-                                        if p == 'x': prop_x = i
-                                        elif p == 'y': prop_y = i
-                                        elif p == 'z': prop_z = i
-                                continue
-                            if line_count % downsample != 0:
-                                line_count += 1
-                                continue
-                            parts = line.split()
-                            if len(parts) >= 3 and prop_x >= 0:
-                                coords.append(float(parts[prop_x]))
-                                coords.append(float(parts[prop_y]))
-                                coords.append(float(parts[prop_z]))
-                            line_count += 1
-                            if len(coords) // 3 >= max_points:
-                                break
-                    if len(coords) >= 3:
-                        app.state.latest_dense_points = coords
-                        app.state.gridmap_dirty = True
-                        pt_count = len(coords) // 3
-                        print(f"[AUTO-LOAD] PLY: {pt_count} points from {ply_file}")
-                        # Pre-generate gridmap
-                        grid_b64 = generate_gridmap_from_points(coords)
-                        if grid_b64:
-                            app.state.gridmap_cache_b64 = grid_b64
-                            app.state.gridmap_dirty = False
-                            print(f"[AUTO-LOAD] Gridmap generated")
-                    break
-                except Exception as e:
-                    print(f"[AUTO-LOAD] PLY failed: {e}")
+        # NOTE: PLY loading is now handled per-dataset in select_dataset()
+        # This ensures each dataset shows its own point cloud, not a global one.
+        print("[AUTO-LOAD] PLY loading deferred to dataset selection")
     
     _auto_load_ply_and_trajectory()
 
@@ -739,13 +695,14 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": "No PLY file found. Run SLAM first."}, status_code=404)
 
         coords = []
+        colors = []
         downsample = 4  # Take every 4th point for ~100K from 400K
         max_points = 100000
 
         try:
             with open(ply_file, 'r') as f:
                 in_header = True
-                prop_x = prop_y = prop_z = -1
+                prop_x = prop_y = prop_z = prop_r = prop_g = prop_b = -1
                 props = []
                 line_count = 0
 
@@ -761,6 +718,9 @@ def create_app() -> FastAPI:
                                 if p == 'x': prop_x = i
                                 elif p == 'y': prop_y = i
                                 elif p == 'z': prop_z = i
+                                elif p == 'red': prop_r = i
+                                elif p == 'green': prop_g = i
+                                elif p == 'blue': prop_b = i
                         continue
 
                     if line_count % downsample != 0:
@@ -772,6 +732,12 @@ def create_app() -> FastAPI:
                         coords.append(float(parts[prop_x]))
                         coords.append(float(parts[prop_y]))
                         coords.append(float(parts[prop_z]))
+                        if prop_r >= 0 and prop_g >= 0 and prop_b >= 0:
+                            colors.append(float(parts[prop_r]) / 255.0)
+                            colors.append(float(parts[prop_g]) / 255.0)
+                            colors.append(float(parts[prop_b]) / 255.0)
+                        else:
+                            colors.extend([0.7, 0.7, 0.7])
                     line_count += 1
 
                     if len(coords) // 3 >= max_points:
@@ -781,6 +747,7 @@ def create_app() -> FastAPI:
                 return JSONResponse({"error": "PLY file has no points"}, status_code=400)
 
             app.state.latest_dense_points = coords
+            app.state.latest_dense_colors = colors
             app.state.gridmap_dirty = True
             point_count = len(coords) // 3
 
@@ -788,6 +755,7 @@ def create_app() -> FastAPI:
             msg = json.dumps({
                 "type": "dense_points_update",
                 "coords": coords,
+                "colors": colors,
                 "point_count": point_count
             })
             dead = set()
@@ -867,11 +835,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/latest_frame")
     async def get_latest_frame():
+        from starlette.responses import JSONResponse as _JR
         if app.state.last_frame_snapshot:
-            return {"frame": app.state.last_frame_snapshot, "buffered": len(app.state.frame_buffer), "source": "snapshot"}
+            return _JR({"frame": app.state.last_frame_snapshot, "buffered": len(app.state.frame_buffer), "source": "snapshot"}, headers={"Cache-Control": "no-store"})
         elif app.state.frame_buffer and len(app.state.frame_buffer) > 0:
-            return {"frame": app.state.frame_buffer[-1], "buffered": len(app.state.frame_buffer)}
-        return {"error": "No frames"}, 503
+            return _JR({"frame": app.state.frame_buffer[-1], "buffered": len(app.state.frame_buffer)}, headers={"Cache-Control": "no-store"})
+        return _JR({"error": "No frames"}, status_code=503, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/gridmap")
     async def get_gridmap():
@@ -905,17 +874,27 @@ def create_app() -> FastAPI:
         return {"point_count": point_count, "coords": coords}
 
     @app.get("/api/dense_points")
-    async def get_dense_points(max_points: int = 50000):
-        """Get dense point cloud. Downsamples to max_points for REST API (full data via WS)."""
+    async def get_dense_points(max_points: int = 200000):
+        """Get dense point cloud with RGB colors. Downsamples to max_points for REST API."""
         coords = app.state.latest_dense_points
+        colors = app.state.latest_dense_colors
         total_count = len(coords) // 3
+        has_colors = len(colors) == len(coords)  # colors must match coords length
         if total_count > max_points:
             step = total_count / max_points
             indices = [int(i * step) for i in range(min(max_points, total_count))]
             coords = []
+            colors_out = []
             for idx in indices:
                 coords.extend(app.state.latest_dense_points[idx*3:idx*3+3])
-        return {"point_count": total_count, "display_count": len(coords)//3, "coords": coords}
+                if has_colors:
+                    colors_out.extend(app.state.latest_dense_colors[idx*3:idx*3+3])
+        else:
+            colors_out = colors if has_colors else []
+        result = {"point_count": total_count, "display_count": len(coords)//3, "coords": coords}
+        if colors_out:
+            result["colors"] = colors_out
+        return result
 
     @app.post("/api/dense_points")
     async def set_dense_points(data: dict[str, Any]):
@@ -926,13 +905,17 @@ def create_app() -> FastAPI:
         - Append (append=True): coords are appended to existing dense points
         """
         coords = data.get("coords", [])
+        colors = data.get("colors", [])
         append_mode = data.get("append", False)
         
         if coords:
             if append_mode and app.state.latest_dense_points:
                 app.state.latest_dense_points.extend(coords)
+                if colors:
+                    app.state.latest_dense_colors.extend(colors)
             else:
                 app.state.latest_dense_points = coords
+                app.state.latest_dense_colors = colors
             
             app.state.gridmap_dirty = True
             point_count = len(app.state.latest_dense_points) // 3
@@ -940,11 +923,14 @@ def create_app() -> FastAPI:
             # Broadcast full accumulated points to WebSocket clients
             # (only on final chunk or when not chunking)
             if not append_mode or data.get("final", False):
-                msg = json.dumps({
+                broadcast_data = {
                     "type": "dense_points_update",
                     "coords": app.state.latest_dense_points,
                     "point_count": point_count
-                })
+                }
+                if app.state.latest_dense_colors:
+                    broadcast_data["colors"] = app.state.latest_dense_colors
+                msg = json.dumps(broadcast_data)
                 dead = set()
                 for client in app.state.clients:
                     try:
@@ -1009,6 +995,8 @@ def create_app() -> FastAPI:
         # Store dense points
         if frame.get("type") == "dense_points_update" and "coords" in frame:
             app.state.latest_dense_points = frame["coords"]
+            if "colors" in frame:
+                app.state.latest_dense_colors = frame["colors"]
             app.state.gridmap_dirty = True
 
         # Append pose from frame_update to trajectory_poses (for real-time trajectory)
@@ -1077,18 +1065,11 @@ def create_app() -> FastAPI:
             except Exception:
                 pass  # Keep original mask if conversion fails
 
-        # Real YOLO segmentation (Phase 2) - replace pseudo mask
-        if msg_type == "frame_update" and not frame.get("mask_base64") and frame.get("image_base64"):
-            yolo_mask = yolo_segment(frame["image_base64"])
-            if yolo_mask:
-                frame["mask_base64"] = yolo_mask
-                frame["_yolo_mask"] = True  # Flag for frontend
-            else:
-                # Fallback to pseudo mask if YOLO fails
-                pseudo_mask = generate_pseudo_mask(frame["image_base64"])
-                if pseudo_mask:
-                    frame["mask_base64"] = pseudo_mask
-                    frame["_pseudo_mask"] = True
+        # Skip YOLO/pseudo mask fallback when C++ already provides mask
+        # (This block only triggers when C++ sends frame without mask_base64,
+        #  which shouldn't happen in normal SLAM operation. Disabled to reduce latency.)
+        # if msg_type == "frame_update" and not frame.get("mask_base64") and frame.get("image_base64"):
+        #     ...
         
         # Broadcast to all WebSocket clients
         message = json.dumps(frame)
@@ -1426,6 +1407,7 @@ def create_app() -> FastAPI:
         app.state.last_frame_snapshot = None
         app.state.latest_map_points = []
         app.state.latest_dense_points = []
+        app.state.latest_dense_colors = []
         app.state.gridmap_dirty = True
         app.state.trajectory_poses.clear()
         app.state._slam_traj_started = False
@@ -1465,15 +1447,47 @@ def create_app() -> FastAPI:
             return {"error": f"No RGB files in {dataset_name}"}
         
         # Step 1: Clear old scene data
+        print(f"[Dataset] Clearing old scene data for dataset switch")
         app.state.frame_buffer.clear()
-        app.state.last_frame_snapshot = None
         app.state.latest_map_points = []
         app.state.latest_dense_points = []
+        app.state.latest_dense_colors = []
+        app.state.trajectory_poses = []  # Clear trajectory to avoid cross-dataset mismatch
         app.state.gridmap_dirty = True
+        app.state.gridmap_cache_b64 = ""  # Clear gridmap cache to avoid showing old data
+        print(f"[Dataset] Old scene data cleared")
 
-        # Step 2: Set active dataset
+        # Step 2: Set active dataset (do this BEFORE clearing snapshot so push_test_frame works)
         app.state.active_dataset = ds_path
         app.state.active_rgb_files = rgb_files
+
+        # Step 2b: Immediately push a frame from the new dataset so /api/latest_frame returns new data
+        try:
+            if rgb_files:
+                import base64 as _b64
+                # Pick middle frame
+                _idx = len(rgb_files) // 2
+                _img_path = rgb_files[_idx]
+                _img_data = _b64.b64encode(_img_path.read_bytes()).decode()
+                _quick_frame = {
+                    "type": "frame_update",
+                    "frame_number": _idx,
+                    "timestamp": float(_idx) * 0.03,
+                    "image_base64": _img_data,
+                    "mask_base64": "",
+                    "pose": {"tx": 0, "ty": 0, "tz": 0, "qw": 1, "qx": 0, "qy": 0, "qz": 0},
+                    "keyframe_count": 0,
+                    "map_points": 0,
+                    "features": [],
+                    "dynamic_coverage": 0.0
+                }
+                app.state.last_frame_snapshot = _quick_frame
+                app.state.frame_buffer.append(_quick_frame)
+                app.state._test_frame_idx = _idx
+                print(f"[Dataset] Pre-loaded frame {_idx} from {ds_path.name}")
+        except Exception as e:
+            print(f"[Dataset] Pre-load frame failed: {e}")
+            app.state.last_frame_snapshot = None
         
         # Detect dataset type
         video_files = list(ds_path.glob("*.mp4")) + list(ds_path.glob("*.avi")) + list(ds_path.glob("*.mov"))
@@ -1487,23 +1501,29 @@ def create_app() -> FastAPI:
         ply_point_count = 0
         ply_loaded = False
         
+        print(f"[Dataset] Switching to: {dataset_name}")
+        print(f"[Dataset] Cached 3D data available: {list(app.state.dataset_3d_data.keys())}")
+        
         if cached_3d:
             # Restore cached data
             traj_poses = cached_3d.get("trajectory", [])
             trajectory_loaded = len(traj_poses) > 0
             dense_coords = cached_3d.get("dense_points", [])
+            dense_colors = cached_3d.get("dense_colors", [])
             if dense_coords:
                 app.state.latest_dense_points = dense_coords
+                app.state.latest_dense_colors = dense_colors
                 app.state.gridmap_dirty = True
                 ply_loaded = True
                 ply_point_count = len(dense_coords) // 3
             print(f"[Dataset] Restored cached 3D data for {dataset_name}: {len(traj_poses)} poses, {ply_point_count} points")
         else:
-            # Try to load trajectory for this dataset (NO global fallback)
+            # Try to load trajectory for this dataset (with global OUTPUT_DIR fallback)
             traj_candidates = [
                 ds_path / "CameraTrajectory.txt",
                 ds_path / "trajectory.txt",
                 OUTPUT_DIR / dataset_name / "CameraTrajectory.txt",
+                OUTPUT_DIR / "CameraTrajectory.txt",  # global fallback
             ]
             for traj_file in traj_candidates:
                 if traj_file.exists():
@@ -1532,64 +1552,125 @@ def create_app() -> FastAPI:
                         print(f"[Dataset] Failed to load trajectory from {traj_file}: {e}")
                         pass
 
-            # Try to load PLY dense point cloud (NO global fallback)
+            # Try to load PLY dense point cloud (dataset-specific only, no global fallback)
             ply_candidates = [
                 ds_path / "maps" / "static_map.ply",
                 ds_path / "output" / "maps" / "static_map.ply",
                 OUTPUT_DIR / dataset_name / "maps" / "static_map.ply",
             ]
+            print(f"[Dataset] PLY candidates for {dataset_name}:")
+            for pc in ply_candidates:
+                exists = "EXISTS" if pc.exists() else "not found"
+                print(f"  - {pc} [{exists}]")
+            
+            import time
+            ply_start = time.time()
+            
             for ply_file in ply_candidates:
                 if ply_file.exists():
                     try:
                         coords = []
-                        downsample = 4
-                        max_points = 100000
+                        colors = []
+                        ply_size_mb = ply_file.stat().st_size / (1024 * 1024)
+                        if ply_size_mb > 300:
+                            max_points = 200000
+                            downsample = 2
+                        elif ply_size_mb > 150:
+                            max_points = 150000
+                            downsample = 3
+                        else:
+                            max_points = 100000
+                            downsample = 4
+                        
+                        print(f"[Dataset] PLY size: {ply_size_mb:.1f} MB, max_points: {max_points}, downsample: {downsample}")
+                        
                         with open(ply_file, 'r') as f:
-                            in_header = True
-                            prop_x = prop_y = prop_z = -1
+                            header_end = 0
                             props = []
-                            line_count = 0
                             for line in f:
+                                header_end += 1
                                 line = line.strip()
-                                if in_header:
-                                    if line.startswith('property'):
-                                        parts = line.split()
-                                        props.append(parts[2])
-                                    elif line == 'end_header':
-                                        in_header = False
-                                        for i, p in enumerate(props):
-                                            if p == 'x': prop_x = i
-                                            elif p == 'y': prop_y = i
-                                            elif p == 'z': prop_z = i
-                                    continue
-                                if line_count % downsample != 0:
-                                    line_count += 1
-                                    continue
-                                parts = line.split()
-                                if len(parts) >= 3 and prop_x >= 0:
-                                    coords.append(float(parts[prop_x]))
-                                    coords.append(float(parts[prop_y]))
-                                    coords.append(float(parts[prop_z]))
-                                line_count += 1
-                                if len(coords) // 3 >= max_points:
+                                if line.startswith('property'):
+                                    props.append(line.split()[2])
+                                elif line == 'end_header':
                                     break
+                        
+                        prop_indices = {}
+                        for i, p in enumerate(props):
+                            if p in ('x', 'y', 'z', 'red', 'green', 'blue'):
+                                prop_indices[p] = i
+                        
+                        prop_x = prop_indices.get('x', 0)
+                        prop_y = prop_indices.get('y', 1)
+                        prop_z = prop_indices.get('z', 2)
+                        prop_r = prop_indices.get('red', -1)
+                        prop_g = prop_indices.get('green', -1)
+                        prop_b = prop_indices.get('blue', -1)
+                        
+                        has_colors = (prop_r >= 0 and prop_g >= 0 and prop_b >= 0)
+                        
+                        data = np.loadtxt(ply_file, skiprows=header_end, max_rows=max_points * downsample)
+                        
+                        if data.ndim == 1:
+                            data = data.reshape(1, -1)
+                        
+                        step = downsample
+                        sampled = data[::step]
+                        if len(sampled) > max_points:
+                            sampled = sampled[:max_points]
+                        
+                        coords = sampled[:, [prop_x, prop_y, prop_z]].flatten().tolist()
+                        
+                        if has_colors:
+                            color_data = sampled[:, [prop_r, prop_g, prop_b]] / 255.0
+                            colors = color_data.flatten().tolist()
+                        else:
+                            colors = [0.7] * len(coords)
+                        
                         if len(coords) >= 3:
                             app.state.latest_dense_points = coords
+                            app.state.latest_dense_colors = colors
                             app.state.gridmap_dirty = True
                             ply_loaded = True
                             ply_point_count = len(coords) // 3
-                            print(f"[Dataset] Loaded PLY from {ply_file}: {ply_point_count} points")
+                            ply_time = time.time() - ply_start
+                            print(f"[Dataset] Loaded PLY from {ply_file}: {ply_point_count} points, colors: {len(colors)//3}, time: {ply_time:.2f}s")
                         break
                     except Exception as e:
                         print(f"[Dataset] Failed to load PLY from {ply_file}: {e}")
+                        import traceback
+                        traceback.print_exc()
                         pass
             
             # Cache the loaded 3D data for this dataset
             app.state.dataset_3d_data[dataset_name] = {
                 "trajectory": traj_poses,
                 "dense_points": app.state.latest_dense_points,
+                "dense_colors": app.state.latest_dense_colors,
                 "map_points": []
             }
+
+            # Also cache small files to dataset-specific dirs for future loads
+            # (avoids all datasets sharing the same global output)
+            if trajectory_loaded and traj_poses:
+                ds_traj_dir = ds_path
+                ds_traj_file = ds_traj_dir / "CameraTrajectory.txt"
+                if not ds_traj_file.exists():
+                    try:
+                        import shutil
+                        src_traj = None
+                        for tc in traj_candidates:
+                            if tc.exists():
+                                src_traj = tc
+                                break
+                        if src_traj and src_traj != ds_traj_file:
+                            shutil.copy2(str(src_traj), str(ds_traj_file))
+                            print(f"[Dataset] Cached trajectory to {ds_traj_file}")
+                    except Exception as e:
+                        print(f"[Dataset] Failed to cache trajectory: {e}")
+            
+            # Update app.state with dataset-specific data
+            app.state.trajectory_poses = traj_poses
 
         # Step 5: Generate gridmap if we have dense points
         gridmap_b64 = ""
@@ -1598,6 +1679,7 @@ def create_app() -> FastAPI:
             app.state.gridmap_dirty = False
 
         # Step 6: Broadcast scene_reset + new data to all WS clients
+        print(f"[Dataset] Broadcasting scene_reset to {len(app.state.clients)} clients")
         dead = set()
         # 6a: Tell clients to clear old scene
         reset_msg = json.dumps({"type": "scene_reset"})
@@ -1606,6 +1688,7 @@ def create_app() -> FastAPI:
                 await client.send_text(reset_msg)
             except Exception:
                 dead.add(client)
+        print(f"[Dataset] scene_reset sent successfully")
 
         # 6b: Send trajectory
         if trajectory_loaded and traj_poses:
@@ -1618,12 +1701,20 @@ def create_app() -> FastAPI:
 
         # 6c: Send dense points
         if ply_loaded:
-            dp_msg = json.dumps({"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": ply_point_count})
+            print(f"[WS] Sending {ply_point_count} dense points to {len(app.state.clients)} clients")
+            dp_data = {"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": ply_point_count}
+            if app.state.latest_dense_colors:
+                dp_data["colors"] = app.state.latest_dense_colors
+            dp_msg = json.dumps(dp_data)
+            msg_size = len(dp_msg)
+            print(f"[WS] Dense points message size: {msg_size/1024:.1f} KB")
             for client in app.state.clients:
                 try:
                     await client.send_text(dp_msg)
                 except Exception:
                     dead.add(client)
+        else:
+            print(f"[WS] No dense points to send (ply_loaded={ply_loaded})")
 
         # 6d: Send gridmap
         if gridmap_b64:
@@ -1687,8 +1778,18 @@ def create_app() -> FastAPI:
         except Exception as e:
             print(f"[Dataset] Initial frame failed: {e}")
 
-        # Step 8: Auto-start continuous playback with YOLO dynamic recognition
-        auto_start_playback = payload.get("auto_playback", True)
+        # Step 8: Stop any existing playback when switching datasets
+        if app.state.processing_active:
+            app.state.processing_active = False
+            if app.state.processing_task:
+                app.state.processing_task.cancel()
+                app.state.processing_task = None
+            print(f"[Dataset] Stopped existing playback for dataset switch")
+        
+        # Auto-start continuous playback with YOLO dynamic recognition
+        # Default: OFF (frontend triggers via loadTestFrame or playback controls)
+        auto_start_playback = payload.get("auto_playback", False)
+        print(f"[Dataset] auto_playback={auto_start_playback}, processing_active={app.state.processing_active}")
         if auto_start_playback and not app.state.processing_active:
             try:
                 fps = payload.get("fps", 10.0)
@@ -1698,6 +1799,7 @@ def create_app() -> FastAPI:
                 app.state.processing_active = True
                 app.state.processing_index = 0
                 app.state.dataset_fps = fps
+                print(f"[Dataset] Starting auto-playback at {fps} FPS for {len(rgb_files)} frames")
                 
                 async def _auto_playback_loop():
                     idx = 0
@@ -1756,7 +1858,7 @@ def create_app() -> FastAPI:
                                 "mask_base64": mask_b64 or "",
                                 "pose": pose,
                                 "keyframe_count": len(traj_poses),
-                                "map_points": ply_point_count,
+                                "map_points": len(app.state.latest_dense_points) // 3,
                                 "features": features,
                                 "dynamic_coverage": dynamic_coverage,
                             }
@@ -1838,17 +1940,27 @@ def create_app() -> FastAPI:
             if app.state.latest_dense_points and len(app.state.latest_dense_points) >= 3:
                 try:
                     pt_count = len(app.state.latest_dense_points) // 3
-                    # Downsample for WS: max 10K points to avoid multi-MB JSON
-                    ws_max_pts = 10000
+                    has_colors = len(app.state.latest_dense_colors) == len(app.state.latest_dense_points)
+                    # Downsample for WS: max 50K points (increased from 10K for better visual quality)
+                    ws_max_pts = 50000
                     if pt_count > ws_max_pts:
                         step = pt_count / ws_max_pts
                         ws_coords = []
+                        ws_colors = []
                         for i in range(ws_max_pts):
                             idx = int(i * step)
                             ws_coords.extend(app.state.latest_dense_points[idx*3:idx*3+3])
-                        await ws.send_text(json.dumps({"type": "dense_points_update", "coords": ws_coords, "point_count": pt_count}))
+                            if has_colors:
+                                ws_colors.extend(app.state.latest_dense_colors[idx*3:idx*3+3])
+                        dp_data = {"type": "dense_points_update", "coords": ws_coords, "point_count": pt_count}
+                        if ws_colors:
+                            dp_data["colors"] = ws_colors
+                        await ws.send_text(json.dumps(dp_data))
                     else:
-                        await ws.send_text(json.dumps({"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": pt_count}))
+                        dp_data = {"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": pt_count}
+                        if has_colors:
+                            dp_data["colors"] = app.state.latest_dense_colors
+                        await ws.send_text(json.dumps(dp_data))
                 except Exception as e:
                     print(f"[WS] Error sending dense points to new client: {e}")
 

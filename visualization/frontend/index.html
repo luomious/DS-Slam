@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html data-cache-bust="1779181600">
+<html data-cache-bust="1779699048">
 <head>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -90,6 +90,7 @@
         <option value="">Loading datasets...</option>
       </select>
       <button id="btn-load-test" onclick="loadTestFrame()" style="background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">Test Frame</button>
+      <button id="btn-skip-playback" onclick="skipPlaybackGenerate()" style="background:#1f6feb;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">⚡ Skip Playback</button>
       <button id="btn-reset-view" onclick="resetView()" style="background:#30363d;color:#c9d1d9;border:1px solid #444;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">Reset View</button>
     </div>
   </header>
@@ -138,18 +139,65 @@
 
             <div class="panel scene-panel">
                 <div class="panel-header">
-                    <h3>🏔️ 3D点云地图 + 轨迹</h3>
+                    <h3>🏗️ 3D点云地图 + 轨迹</h3>
                     <span class="panel-badge map">M5</span>
+                    <button id="btn-scene-controls" onclick="window.toggleSceneControls()" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:1px 6px;font-size:13px;cursor:pointer;margin-left:auto;line-height:1;" title="显示控制">⚙</button>
                 </div>
                 <div id="scene-content" class="panel-content scene-content">
                     <div class="placeholder">
-                        <span class="placeholder-icon">⏳</span>
+                        <span class="placeholder-icon">🌐</span>
                         <span class="placeholder-text">加载3D场景...</span>
+                    </div>
+                    <!-- 3D Scene Overlay Controls -->
+                    <div id="scene-controls" style="position:absolute;top:8px;right:8px;z-index:10;background:rgba(13,17,23,0.88);border:1px solid #30363d;border-radius:8px;padding:10px 12px;display:none;min-width:180px;pointer-events:auto;">
+                        <div style="font-size:11px;color:#8b949e;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #30363d;padding-bottom:4px;display:flex;align-items:center;justify-content:space-between;">🎨 显示控制 <span onclick="window.toggleSceneControls()" style="cursor:pointer;color:#484f58;font-size:14px;line-height:1;" title="关闭">✕</span></div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:10px;color:#8b949e;display:flex;align-items:center;gap:4px;">点大小
+                                <input id="scene-pt-size" type="range" min="0.5" max="80" step="0.5" value="2" style="flex:1;max-width:90px;" oninput="window.setScenePtSize(this.value)">
+                                <span id="scene-pt-size-val" style="font-size:10px;color:#c9d1d9;min-width:24px;">0.020</span>
+                            </label>
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:10px;color:#8b949e;display:flex;align-items:center;gap:4px;">透明度
+                                <input id="scene-opacity" type="range" min="0.05" max="1" step="0.05" value="0.9" style="flex:1;max-width:90px;" oninput="window.setSceneOpacity(this.value)">
+                                <span id="scene-opacity-val" style="font-size:10px;color:#c9d1d9;min-width:28px;">0.90</span>
+                            </label>
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:10px;color:#8b949e;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                                <input id="scene-size-attenuation" type="checkbox" checked onchange="window.setSceneSizeAttenuation(this.checked)"> 近大远小
+                            </label>
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:10px;color:#8b949e;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                                <input id="scene-grid-toggle" type="checkbox" onchange="window.setSceneGrid(this.checked)"> 网格+坐标轴
+                            </label>
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:10px;color:#8b949e;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                                <input id="scene-traj-toggle" type="checkbox" onchange="window.setSceneTrajectory(this.checked)"> 轨迹线
+                            </label>
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <span style="font-size:10px;color:#8b949e;">背景</span>
+                            <button id="bg-dark-btn" onclick="window.setSceneBg('dark')" style="background:#21262d;color:#c9d1d9;border:1px solid #444;border-radius:3px;padding:1px 8px;font-size:10px;cursor:pointer;margin-left:4px;">深色</button>
+                            <button id="bg-light-btn" onclick="window.setSceneBg('light')" style="background:#d0d7de;color:#24292f;border:1px solid #aaa;border-radius:3px;padding:1px 8px;font-size:10px;cursor:pointer;">浅色</button>
+                        </div>
+                        <div style="margin-bottom:4px;">
+                            <span style="font-size:10px;color:#8b949e;">交互</span>
+                            <button id="mode-nav-btn" onclick="window.setSceneMode('nav')" style="background:#1f6feb;color:#fff;border:none;border-radius:3px;padding:1px 8px;font-size:10px;cursor:pointer;margin-left:4px;">🖐 导航</button>
+                            <button id="mode-pick-btn" onclick="window.setSceneMode('pick')" style="background:#30363d;color:#c9d1d9;border:1px solid #444;border-radius:3px;padding:1px 8px;font-size:10px;cursor:pointer;">👆 拾取</button>
+                        </div>
+                    </div>
+                    <!-- Picking Info Panel -->
+                    <div id="picking-info" style="position:absolute;bottom:8px;right:8px;z-index:10;background:rgba(13,17,23,0.92);border:1px solid #30363d;border-radius:8px;padding:8px 10px;display:none;min-width:160px;pointer-events:none;">
+                        <div style="font-size:10px;color:#8b949e;font-weight:bold;margin-bottom:4px;border-bottom:1px solid #30363d;padding-bottom:3px;">📍 拾取信息</div>
+                        <div id="picking-data" style="font-size:10px;color:#c9d1d9;line-height:1.6;font-family:monospace;"></div>
                     </div>
                 </div>
                 <div class="panel-footer">
                     <span id="pointcloud-info">0 points</span>
-                    <span>拖动:旋转 | 滚轮:缩放</span>
+                    <span>拖动:旋转 | 滚轮:缩放 | 右键:平移</span>
                 </div>
             </div>
 
@@ -187,7 +235,7 @@
     <!-- Non-module loader: avoids ES module import chain failures blocking everything -->
     
 
-    <script src="/static/js/app_loader.js?v=1779181600&t=1779181600"></script>
-<script>console.log('[CACHE-BUST] Page loaded at 1779181600, JS version: v1779181600');</script>
+    <script src="/static/js/app_loader.js?v=1779700060&t=1779700060"></script>
+<script>console.log('[CACHE-BUST] Page loaded at 1779700060, JS version: v1779700060');</script>
 </body>
 </html>

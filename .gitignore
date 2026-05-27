@@ -1,5 +1,4 @@
-﻿.venv/
-venv-py312/
+.venv/
 __pycache__/
 *.pyc
 
@@ -14,8 +13,18 @@ orbslam3/Thirdparty/DBoW2/build_static/
 orbslam3/Thirdparty/DBoW2/build_clang/
 orbslam3/Thirdparty/**/build_clang/
 orbslam3/Thirdparty/g2o/bin/
+orbslam3/Thirdparty/g2o/build/
+orbslam3/Thirdparty/g2o/build_clang/
 slam-system/build/
 build/
+
+# Compiled executables (keep source, ignore binaries)
+*.exe
+*.dll
+*.dll.a
+*.a
+*.so
+*.so.*
 
 # Large datasets and model artifacts
 data/
@@ -70,3 +79,34 @@ task-*.md
 # Trajectory outputs
 CameraTrajectory*.txt
 KeyFrameTrajectory*.txt
+
+# Backup files
+*.bak*
+*.backup*
+
+# Temporary scripts and logs
+_*.sh
+_*.ps1
+analyze_ply.py
+check_evo.py
+check_path.py
+eval_ate.py
+evo_*.txt
+test_*.txt
+stderr.txt
+stdout.txt
+dense_points.json
+*.zip
+
+# Linux-specific libraries
+libs/onnxruntime-linux/
+
+# Large downloads
+downloads/*.appx
+downloads/*.exe
+
+# Map output files
+maps/*.ply
+maps/*.png
+output/maps/*.ply
+output/maps/*.png

@@ -22,19 +22,19 @@ orbslam3:
 datasets:
   fr1_xyz:
     label: fr1_xyz static baseline
-    root: data/tum-rgbd_dataset_freiburg1_xyz
+    root: datasets/tum/rgbd_dataset_freiburg1_xyz
     camera: tum1
-    association: data/tum-rgbd_dataset_freiburg1_xyz/associations/rgbd_dataset_freiburg1_xyz.txt
+    association: datasets/tum/rgbd_dataset_freiburg1_xyz/associations/rgbd_dataset_freiburg1_xyz.txt
   fr3_walking_xyz:
     label: fr3_walking_xyz dynamic benchmark
-    root: data/tum-rgbd_dataset_freiburg3_walking_xyz
+    root: datasets/tum/rgbd_dataset_freiburg3_walking_xyz
     camera: tum3
-    association: data/tum-rgbd_dataset_freiburg3_walking_xyz/associations/rgbd_dataset_freiburg3_walking_xyz.txt
+    association: datasets/tum/rgbd_dataset_freiburg3_walking_xyz/associations/rgbd_dataset_freiburg3_walking_xyz.txt
   fr3_sitting_xyz:
     label: fr3_sitting_xyz static control
-    root: data/tum-rgbd_dataset_freiburg3_sitting_xyz
+    root: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz
     camera: tum3
-    association: data/tum-rgbd_dataset_freiburg3_sitting_xyz/associations/rgbd_dataset_freiburg3_sitting_xyz.txt
+    association: datasets/tum/rgbd_dataset_freiburg3_sitting_xyz/associations/rgbd_dataset_freiburg3_sitting_xyz.txt
 
 segmentation:
   model_path: segmentation/onnx/yolo11n_seg_v2.onnx

@@ -20,6 +20,7 @@
 #include<algorithm>
 #include<fstream>
 #include<chrono>
+#include<cstdlib>
 
 #include<opencv2/core/core.hpp>
 
@@ -34,7 +35,7 @@ int main(int argc, char **argv)
 {
     if(argc < 5)
     {
-        cerr << endl << "Usage: ./rgbd_tum path_to_vocabulary path_to_settings path_to_sequence path_to_association [path_to_onnx_model]" << endl;
+        cerr << endl << "Usage: ./rgbd_tum path_to_vocabulary path_to_settings path_to_sequence path_to_association [path_to_onnx_model] [backend_url]" << endl;
         return 1;
     }
 
@@ -67,19 +68,48 @@ int main(int argc, char **argv)
     if (argc >= 6) {
         SLAM.InitSegmentator(argv[5]);
     } else {
-        // Derive absolute path from executable location (argv[0])
-        // rgbd_tum is at orbslam3/Examples/RGB-D/rgbd_tum
-        // model is at segmentation/onnx/yolo11n_seg_v2.onnx (relative to project root)
+        // Derive model path from executable location (argv[0])
+        // Fallback order:
+        //   1) exeDir + /../../../segmentation/onnx/... (from Examples/RGB-D/ up 3 levels to DS-Slam/)
+        //   2) ../segmentation/onnx/... (from CWD/orbslam3/ up 1 level to DS-Slam/)
         std::string exePath(argv[0]);
         size_t lastSlash = exePath.find_last_of("/\\");
         std::string exeDir = (lastSlash != std::string::npos) ? exePath.substr(0, lastSlash) : ".";
-        std::string modelPath = exeDir + "/../../../segmentation/onnx/yolo11n_seg_v2.onnx";
-        SLAM.InitSegmentator(modelPath);
+        std::string modelPath1 = exeDir + "/../../../segmentation/onnx/yolo11n_seg_v2.onnx";
+        std::string modelPath2 = "../segmentation/onnx/yolo11n_seg_v2.onnx";
+
+        // Try exeDir-derived path first, then CWD-relative
+        std::ifstream testFile(modelPath1);
+        if (testFile.good()) {
+            testFile.close();
+            SLAM.InitSegmentator(modelPath1);
+        } else {
+            testFile.close();
+            cout << "DS-SLAM M3: Model not found at " << modelPath1 << ", trying " << modelPath2 << endl;
+            SLAM.InitSegmentator(modelPath2);
+        }
     }
 #endif
 
     // DS-SLAM M6: initialize visualizer
-    SLAM.InitVisualizer();
+    // Priority: 1) CLI arg 6  2) env DS_SLAM_BACKEND_URL  3) default http://127.0.0.1:8000/api/frame
+    {
+        std::string vizUrl;
+        if (argc >= 7) {
+            vizUrl = argv[6];
+        } else {
+            const char* envUrl = std::getenv("DS_SLAM_BACKEND_URL");
+            if (envUrl && envUrl[0] != '\0') {
+                vizUrl = envUrl;
+            }
+        }
+        if (!vizUrl.empty()) {
+            SLAM.InitVisualizer(vizUrl);
+            cout << "DS-SLAM M6: Visualizer URL: " << vizUrl << endl;
+        } else {
+            SLAM.InitVisualizer();
+        }
+    }
 
     float imageScale = SLAM.GetImageScale();
 
@@ -160,12 +190,19 @@ int main(int argc, char **argv)
     cout << "mean tracking time: " << totaltime/nImages << endl;
 
     // Save camera trajectory
-    SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+    // Use dataset path (argv[3]) as base directory for output files
+    std::string datasetPath(argv[3]);
+    // Remove trailing slash if present
+    if (!datasetPath.empty() && (datasetPath.back() == '/' || datasetPath.back() == '\\')) {
+        datasetPath.pop_back();
+    }
+    
+    SLAM.SaveTrajectoryTUM(datasetPath + "/CameraTrajectory.txt");
+    SLAM.SaveKeyFrameTrajectoryTUM(datasetPath + "/KeyFrameTrajectory.txt");
 
 #ifndef DS_SLAM_DISABLED
-    // DS-SLAM M5: save static map
-    SLAM.SaveStaticMap("output/maps/static_map.ply", "output/maps/grid_map.png");
+    // DS-SLAM M5: save static map to dataset directory
+    SLAM.SaveStaticMap(datasetPath + "/maps/static_map.ply", datasetPath + "/maps/grid_map.png");
 #endif
 
     // DS-SLAM M6: stop visualizer

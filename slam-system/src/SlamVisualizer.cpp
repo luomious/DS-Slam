@@ -105,18 +105,29 @@ size_t SlamVisualizer::getQueueSize() const {
 
 void SlamVisualizer::senderThreadFunc() {
     while (!m_stop.load()) {
-        // If auto-disabled, drain queue without sending
+        // If auto-disabled, try to recover every ~5 seconds
         if (m_disabled.load()) {
             std::unique_lock<std::mutex> lock(m_queueMutex);
             // Drain the queue silently
             while (!m_queue.empty()) {
                 m_queue.pop();
             }
-            // Wait for stop signal
-            m_cv.wait(lock, [this] {
+            // Wait for stop signal or recovery timeout (5s)
+            if (m_cv.wait_for(lock, std::chrono::seconds(5), [this] {
                 return m_stop.load();
-            });
-            break;
+            })) {
+                break;  // Stop requested
+            }
+            // Try recovery: attempt one probe POST
+            lock.unlock();
+            std::string probeJson = "{\"type\":\"probe\"}";
+            bool recovered = sendHTTPPost(probeJson);
+            if (recovered) {
+                m_disabled.store(false);
+                m_consecutiveFailures.store(0);
+                std::cerr << "[Vis] Auto-recovered! Backend is reachable again." << std::endl;
+            }
+            continue;
         }
 
         FrameData frame;
@@ -235,9 +246,11 @@ void SlamVisualizer::SendFrame(
     }
     
     // Calculate dynamic coverage from mask
+    // Calculate dynamic coverage from mask
+    // segMask: non-zero pixels = dynamic object regions
     if (!maskImage.empty()) {
         int totalPixels = maskImage.rows * maskImage.cols;
-        int dynamicPixels = totalPixels - cv::countNonZero(maskImage);
+        int dynamicPixels = cv::countNonZero(maskImage);
         frame.dynamicCoverage = static_cast<float>((dynamicPixels * 100.0f) / totalPixels);
     }
     
@@ -269,6 +282,45 @@ void SlamVisualizer::pushTrajectoryUpdate(const std::vector<float>& trajectoryDa
     m_cv.notify_one();
 }
 
+void SlamVisualizer::SendDensePoints(const std::vector<float>& coords, int totalPoints) {
+    if (coords.empty() || coords.size() < 3) {
+        return;
+    }
+
+    if (!m_running.load()) {
+        start();
+    }
+
+    FrameData frame;
+    frame.type = "dense_points_update";
+    frame.densePointsCoords = coords;
+    frame.densePointsTotal = totalPoints;
+
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        // Drop older dense_points_update if queue is full
+        if (m_queue.size() >= 30) {
+            std::queue<FrameData> newQueue;
+            bool dropped = false;
+            while (!m_queue.empty()) {
+                FrameData f = m_queue.front();
+                m_queue.pop();
+                if (!dropped && f.type == "dense_points_update") {
+                    dropped = true;
+                    continue;
+                }
+                newQueue.push(f);
+            }
+            m_queue = newQueue;
+        }
+        m_queue.push(frame);
+    }
+    m_cv.notify_one();
+    static int dp_log_count = 0;
+    if (++dp_log_count <= 2 || dp_log_count % 10 == 0)
+        std::cerr << "[Vis] SendDensePoints queued: " << coords.size()/3 << " sampled / " << totalPoints << " total, q=" << m_queue.size() << std::endl;
+}
+
 // ============================================================================
 // JSON Building
 // ============================================================================
@@ -295,6 +347,19 @@ std::string SlamVisualizer::buildJsonFromFrame(const FrameData& frame) const {
         for (size_t i = 0; i < frame.mapPointsCoords.size(); i++) {
             if (i > 0) jsonStream << ",";
             jsonStream << std::fixed << std::setprecision(4) << frame.mapPointsCoords[i];
+        }
+        jsonStream << "]}";
+        return jsonStream.str();
+    }
+
+    // Dense points update message
+    if (frame.type == "dense_points_update") {
+        jsonStream << "{\"type\":\"dense_points_update\",";
+        jsonStream << "\"point_count\":" << frame.densePointsTotal << ",";
+        jsonStream << "\"coords\":[";
+        for (size_t i = 0; i < frame.densePointsCoords.size(); i++) {
+            if (i > 0) jsonStream << ",";
+            jsonStream << std::fixed << std::setprecision(4) << frame.densePointsCoords[i];
         }
         jsonStream << "]}";
         return jsonStream.str();
@@ -499,8 +564,9 @@ bool SlamVisualizer::sendHTTPPost(const std::string& jsonData) const {
     }
 
     // Set timeouts to match curl path (200ms connect, 500ms total)
-    DWORD connectTimeout = 200;
-    DWORD sendRecvTimeout = 500;
+    // Set timeouts (500ms connect, 3000ms total — large payloads need more time)
+    DWORD connectTimeout = 500;
+    DWORD sendRecvTimeout = 3000;
     WinHttpSetOption(hRequest, WINHTTP_OPTION_CONNECT_TIMEOUT, &connectTimeout, sizeof(connectTimeout));
     WinHttpSetOption(hRequest, WINHTTP_OPTION_SEND_TIMEOUT, &sendRecvTimeout, sizeof(sendRecvTimeout));
     WinHttpSetOption(hRequest, WINHTTP_OPTION_RECEIVE_TIMEOUT, &sendRecvTimeout, sizeof(sendRecvTimeout));
@@ -547,8 +613,8 @@ bool SlamVisualizer::sendHTTPPost(const std::string& jsonData) const {
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonData.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, jsonData.size());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 500L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 200L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 500L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
 
     CURLcode res = curl_easy_perform(curl);

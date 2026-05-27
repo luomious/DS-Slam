@@ -90,12 +90,12 @@ class Tracking;
 class LocalMapping;
 class LoopClosing;
 class Settings;
-class SlamVisualizer;
-
 #ifndef DS_SLAM_DISABLED
-class SemanticSegmentator;
-class StaticMapper;
-namespace SLAM { class SlamVisualizer; }
+// DS-SLAM classes are in global namespace / ::SLAM namespace
+// Import them into ORB_SLAM3 namespace for use within this header
+using ::SemanticSegmentator;
+using ::StaticMapper;
+using ::SLAM::SlamVisualizer;
 #endif
 
 class System

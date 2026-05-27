@@ -72,6 +72,6 @@ Viewer.ViewpointF: 500.0
 # DS-SLAM M3: Semantic Segmentation Parameters
 #--------------------------------------------------------------------------------------------
 Segmentator:
-    ONNXPath: "../../../segmentation/onnx/yolo11n_seg_v2.onnx"
+    ONNXPath: "../segmentation/onnx/yolo11n_seg_v2.onnx"
     Enabled: 1
 

@@ -30,6 +30,10 @@ struct FrameData {
     // Map point world coordinates (x,y,z triples)
     std::vector<float> mapPointsCoords;  // up to ~500 points * 3 floats
 
+    // Dense points for 3D visualization
+    std::vector<float> densePointsCoords;
+    int densePointsTotal = 0;
+
     // JSON type indicator
     std::string type;  // "frame_update" or "trajectory_update"
     std::vector<float> trajectoryData;  // for trajectory_update
@@ -67,6 +71,9 @@ public:
 
     // Send map point coordinates (called periodically)
     void SendMapPoints(const std::vector<float>& coords);
+
+    // Send dense point cloud (called periodically)
+    void SendDensePoints(const std::vector<float>& coords, int totalPoints);
 
     // Get queue size for monitoring
     size_t getQueueSize() const;

@@ -1,4 +1,0 @@
-set args E:/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Vocabulary/ORBvoc.txt E:/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/Monocular/TUM3.yaml E:/VSCode/VSCode-Workspace/DS-Slam/datasets/tum/rgbd_dataset_freiburg3_walking_xyz E:/VSCode/VSCode-Workspace/DS-Slam/orbslam3/Examples/RGB-D/associations/fr3_walking_xyz.txt E:/VSCode/VSCode-Workspace/DS-Slam/segmentation/onnx/yolo11m-seg.onnx
-run
-bt
-quit

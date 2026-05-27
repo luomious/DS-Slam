@@ -1,6 +1,6 @@
 # DS-SLAM 项目进度跟踪
 
-> 最后更新：2026-05-20 10:45
+> 最后更新：2026-05-20 14:30
 
 ## 📊 当前状态
 
@@ -8,7 +8,7 @@
 **Git Tag**: `milestone-slam-testing`
 **远程仓库**: https://github.com/luomious/DS-Slam
 
-**当前阶段**: 阶段 7.3 ✅ 完成 → 阶段 7.5 系统效果测试（GUI 运行）
+**当前阶段**: 阶段 7.5 系统效果测试 - 前端 GUI 6 个问题已修复，待测试验证
 
 ## ✅ 已完成
 
@@ -35,6 +35,61 @@
 | **阶段 7.3 多数据集测试** | ✅ | 4数据集全测完，M3+M4组合动态场景改善94-96% |
 | **编译修复** | ✅ | SlamVisualizer自动禁用+WinHTTP超时+M4参数调优+rgbd_tum路径修复 |
 | **编译脚本** | ✅ | build_ds_slam.sh 解决 WSL2+NTFS 编译卡住问题 |
+| **前端 GUI 6 问题修复** | ✅ | 按钮无反应/dynamic_coverage/栅格图变形/进度条位置/相机居中 |
+| **前端编码乱码修复** | ✅ | 面板标题emoji乱码/切换数据集同步/动态场景支持 |
+| **动态场景信息显示** | ✅ | FPS/动态覆盖率/数据集名称实时显示 |
+
+## 🔧 动态场景信息显示（2026-05-20 15:30）
+
+### 新增功能
+
+| 指标 | 位置 | 说明 |
+|------|------|------|
+| **FPS** | Header 统计区 | 实时帧率显示，基于 performance.now() 计算 |
+| **Dynamic %** | Header 统计区 | 动态场景覆盖率，橙色高亮显示 |
+| **Dataset Badge** | Header 右侧 | 当前选中数据集名称，渐变徽章 |
+
+### 修改文件
+- `visualization/frontend/index.html` - 添加 dynamic-coverage 和 dataset-badge 元素
+- `visualization/frontend/static/js/app_loader.js` - FPS计算逻辑 + 动态覆盖率更新
+- `visualization/frontend/static/css/style.css` - 动态统计项样式 + 数据集徽章样式
+
+## 🔧 前端编码乱码修复记录（2026-05-20 15:00）
+
+### 修复的 3 个问题
+
+| # | 问题 | 严重度 | 根因 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | 面板标题乱码 | **P1** | HTML文件编码损坏 | 重写index.html，修复所有emoji和中文 |
+| 2 | 切换数据集不同步 | **P1** | scene_reset未清空2D面板 | 添加清空RGB/YOLO画布和显示placeholder逻辑 |
+| 3 | 动态场景功能 | **P2** | 已有完整YOLO检测逻辑 | 验证支持freiburg3_walking_xyz等动态数据集 |
+
+### 修改文件
+- `visualization/frontend/index.html` - 修复乱码，重写整个文件
+- `visualization/frontend/static/js/app_loader.js` - scene_reset增加2D面板清空
+
+### 可用数据集
+- **静态场景**: `rgbd_dataset_freiburg1_xyz`, `rgbd_dataset_freiburg3_sitting_static`
+- **动态场景**: `rgbd_dataset_freiburg3_walking_xyz`, `rgbd_dataset_freiburg3_walking_halfsphere`
+
+## 🔧 前端 GUI 修复记录（2026-05-20 14:30）
+
+### 修复的 6 个问题
+
+| # | 问题 | 严重度 | 根因 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | 所有按钮无反应 | **P0** | IIFE 闭包内函数未暴露到 window | 将 6 个按钮函数移到 IIFE 顶部立即暴露 |
+| 2 | dynamic_coverage=100% | **P1** | YOLO 叠加图背景误算 | 严格阈值 R>100, B<50, G<50 检测红色动态区域 |
+| 3 | YOLO 面板无显示 | **P1** | Test Frame 按钮无效（同 #1） | 同 #1 修复 |
+| 4 | 栅格图比例变形 | **P2** | 正方形栅格图在非正方形 canvas 上拉伸 | CSS 强制保持正方形比例 |
+| 5 | 进度条位置不对 | **P2** | padding-bottom=50px 缺少 1px 边框补偿 | 改为 51px |
+| 6 | 3D 点云相机居中 | **P2** | _autoScaleGrid 只检查轨迹数据 | 同时检查轨迹和稠密点云数据 |
+
+### 修改文件
+- `visualization/frontend/static/js/app_loader.js` - 按钮函数暴露 + 相机居中逻辑
+- `visualization/backend/main.py` - dynamic_coverage 检测阈值
+- `visualization/frontend/static/css/style.css` - 栅格图比例样式
+- `visualization/frontend/index.html` - 进度条 padding-bottom
 
 ## 🔧 本次修复记录（2026-05-18）
 
