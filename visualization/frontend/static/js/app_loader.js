@@ -27,39 +27,102 @@
             this.ws = null;
             this.onMessage = null;
             this.connected = false;
+            this._pingInterval = null;
+            this._pongTimeout = null;
+            this._reconnectTimeout = null;
+            this._reconnectAttempts = 0;
         }
         
         connect() {
+            // Cleanup previous connection
+            this._cleanup();
+            
             try {
                 this.ws = new WebSocket(this.url);
             } catch(e) {
                 console.error('[WS] Constructor failed:', e);
+                this._scheduleReconnect();
                 return;
             }
             this.ws.onopen = () => {
                 this.connected = true;
+                this._reconnectAttempts = 0;
                 this._updateIndicator(true);
                 setProgress(25, 'WS | Traj... | Pts... | Live... 25%');
                 setStatus('WebSocket connected');
-                // start ping
+                console.log('[WS] Connected');
+                // Start ping every 15 seconds
                 this._pingInterval = setInterval(() => {
                     if (this.connected && this.ws.readyState === WebSocket.OPEN) {
                         this.ws.send(JSON.stringify({type:'ping'}));
+                        // Set pong timeout (5 seconds)
+                        this._pongTimeout = setTimeout(() => {
+                            console.warn('[WS] Pong timeout, reconnecting...');
+                            this.ws.close();
+                        }, 5000);
                     }
-                }, 30000);
+                }, 15000);
             };
             this.ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    // Handle server ping/pong
+                    if (data.type === 'server_ping') {
+                        this.ws.send(JSON.stringify({type:'pong'}));
+                        return;
+                    }
+                    if (data.type === 'pong') {
+                        // Clear pong timeout
+                        if (this._pongTimeout) {
+                            clearTimeout(this._pongTimeout);
+                            this._pongTimeout = null;
+                        }
+                        return;
+                    }
+                    if (data.type === 'keepalive') {
+                        return;
+                    }
                     if (this.onMessage) this.onMessage(data);
                 } catch(e) {}
             };
-            this.ws.onclose = () => {
+            this.ws.onclose = (event) => {
+                console.log('[WS] Closed:', event.code, event.reason);
                 this.connected = false;
                 this._updateIndicator(false);
-                setTimeout(() => this.connect(), 3000);
+                this._cleanup();
+                this._scheduleReconnect();
             };
-            this.ws.onerror = () => { this.ws.close(); };
+            this.ws.onerror = (event) => {
+                console.error('[WS] Error:', event);
+                this.ws.close();
+            };
+        }
+        
+        _cleanup() {
+            if (this._pingInterval) {
+                clearInterval(this._pingInterval);
+                this._pingInterval = null;
+            }
+            if (this._pongTimeout) {
+                clearTimeout(this._pongTimeout);
+                this._pongTimeout = null;
+            }
+            if (this._reconnectTimeout) {
+                clearTimeout(this._reconnectTimeout);
+                this._reconnectTimeout = null;
+            }
+        }
+        
+        _scheduleReconnect() {
+            if (this._reconnectTimeout) return;
+            // Exponential backoff: 1s, 2s, 4s, 8s, max 10s
+            const delay = Math.min(1000 * Math.pow(2, this._reconnectAttempts), 10000);
+            this._reconnectAttempts++;
+            console.log(`[WS] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts})`);
+            this._reconnectTimeout = setTimeout(() => {
+                this._reconnectTimeout = null;
+                this.connect();
+            }, delay);
         }
         
         _updateIndicator(connected) {
@@ -211,7 +274,7 @@
             denseGeo.setAttribute('position', new THREE.BufferAttribute(this.densePositions, 3));
             denseGeo.setAttribute('color', new THREE.BufferAttribute(this.denseColors, 3));
             denseGeo.setDrawRange(0, 0);
-            const denseMat = new THREE.PointsMaterial({ size: 0.02, vertexColors: true, sizeAttenuation: true, transparent: true, opacity: 0.7 });
+            const denseMat = new THREE.PointsMaterial({ size: 0.04, vertexColors: true, sizeAttenuation: true, transparent: true, opacity: 0.88 });
             this.densePoints = new THREE.Points(denseGeo, denseMat);
             this.scene.add(this.densePoints);
             this.densePtCount = 0;
@@ -260,16 +323,28 @@
                 const ty = p.ty !== undefined ? p.ty : (p.position ? p.position[1] : 0);
                 const tz = p.tz !== undefined ? p.tz : (p.position ? p.position[2] : 0);
                 if (this.trajCount < this.trajPositions.length / 3) {
-                    // Z-up to Y-up
-                    this.trajPositions[this.trajCount*3] = tx;
-                    this.trajPositions[this.trajCount*3+1] = tz;
-                    this.trajPositions[this.trajCount*3+2] = -ty;
+                    // Backend uses OpenCV camera coordinates: X-right, Y-down, Z-forward
+                    // Three.js uses Y-up coordinate system: X-right, Y-up, Z-backward
+                    // Convert: (x,y,z)_OpenCV -> (x,-y,-z)_Three.js
+                    this.trajPositions[this.trajCount*3] = tx;      // x -> x
+                    this.trajPositions[this.trajCount*3+1] = -ty;   // y -> -y (down -> up)
+                    this.trajPositions[this.trajCount*3+2] = -tz;   // z -> -z (forward -> backward)
                     this.trajCount++;
                 }
             }
             this.trajLine.geometry.setDrawRange(0, this.trajCount);
             this.trajLine.geometry.attributes.position.needsUpdate = true;
             this._autoScaleGrid();
+            
+            // Update camera marker to last trajectory point
+            if (this.trajCount > 0 && this.cameraMarker) {
+                const lastIdx = this.trajCount - 1;
+                const cx = this.trajPositions[lastIdx*3];
+                const cy = this.trajPositions[lastIdx*3+1];
+                const cz = this.trajPositions[lastIdx*3+2];
+                this.cameraMarker.position.set(cx, cy, cz);
+                this.cameraMarker.lookAt(cx + 0.01, cy, cz);
+            }
             
             // Hide placeholder
             const ph = this.container.querySelector('.placeholder');
@@ -281,12 +356,14 @@
             const n = Math.floor(coords.length / 3);
             const maxN = Math.min(n, this.mapPositions.length / 3);
             for (let i = 0; i < maxN; i++) {
-                // Z-up to Y-up
-                this.mapPositions[i*3] = coords[i*3];
-                this.mapPositions[i*3+1] = coords[i*3+2];
-                this.mapPositions[i*3+2] = -coords[i*3+1];
-                // Color: height-based
-                const h = coords[i*3+1];
+                // Backend uses OpenCV camera coordinates: X-right, Y-down, Z-forward
+                // Three.js uses Y-up coordinate system: X-right, Y-up, Z-backward
+                // Convert: (x,y,z)_OpenCV -> (x,-y,-z)_Three.js
+                this.mapPositions[i*3] = coords[i*3];      // x -> x
+                this.mapPositions[i*3+1] = -coords[i*3+1]; // y -> -y (down -> up)
+                this.mapPositions[i*3+2] = -coords[i*3+2]; // z -> -z (forward -> backward)
+                // Color: height-based (use -y as height in Three.js)
+                const h = -coords[i*3+1]; // -Y is up in Three.js
                 this.mapColors[i*3] = 0.3 + 0.7 * Math.max(0, Math.min(1, h/2));
                 this.mapColors[i*3+1] = 0.8;
                 this.mapColors[i*3+2] = 0.3 + 0.7 * Math.max(0, Math.min(1, 1-h/2));
@@ -303,17 +380,19 @@
             const maxN = Math.min(n, this.densePositions.length / 3);
             const hasColors = colors && colors.length >= n;
             for (let i = 0; i < maxN; i++) {
-                // Z-up to Y-up conversion
-                this.densePositions[i*3] = coords[i*3];
-                this.densePositions[i*3+1] = coords[i*3+2];
-                this.densePositions[i*3+2] = -coords[i*3+1];
+                // Backend uses OpenCV camera coordinates: X-right, Y-down, Z-forward
+                // Three.js uses Y-up coordinate system: X-right, Y-up, Z-backward
+                // Convert: (x,y,z)_OpenCV -> (x,-y,-z)_Three.js
+                this.densePositions[i*3] = coords[i*3];      // x -> x
+                this.densePositions[i*3+1] = -coords[i*3+1]; // y -> -y (down -> up)
+                this.densePositions[i*3+2] = -coords[i*3+2]; // z -> -z (forward -> backward)
                 // Color: use RGB from dataset if available, fallback to height colormap
                 if (hasColors) {
                     this.denseColors[i*3] = colors[i*3];
                     this.denseColors[i*3+1] = colors[i*3+1];
                     this.denseColors[i*3+2] = colors[i*3+2];
                 } else {
-                    const h = coords[i*3+1];
+                    const h = -coords[i*3+1]; // -Y is up in Three.js
                     const t = Math.max(0, Math.min(1, (h + 0.5) / 2.5));
                     this.denseColors[i*3] = 0.2 + 0.8 * t;
                     this.denseColors[i*3+1] = 0.3 + 0.5 * (1 - Math.abs(t - 0.5) * 2);
@@ -345,9 +424,11 @@
                 tx = pose[3]; ty = pose[7]; tz = pose[11];
             } else return;
             
-            // Z-up to Y-up
-            this.cameraMarker.position.set(tx, tz, -ty);
-            this.cameraMarker.lookAt(tx + 0.01, tz, -ty);
+            // Backend uses OpenCV camera coordinates: X-right, Y-down, Z-forward
+            // Three.js uses Y-up coordinate system: X-right, Y-up, Z-backward
+            // Convert: (x,y,z)_OpenCV -> (x,-y,-z)_Three.js
+            this.cameraMarker.position.set(tx, -ty, -tz); // x, -y, -z
+            this.cameraMarker.lookAt(tx + 0.01, -ty, -tz);
             
             // Smooth follow
             this.controls.target.lerp(this.cameraMarker.position, 0.05);
@@ -486,6 +567,9 @@
         }
         if (data.mask_base64) {
             drawImage(yoloImg, 'yolo-canvas', 'yolo-panel', data.mask_base64, 'png', null);
+        } else if (data.image_base64) {
+            // No mask → show original image on YOLO panel
+            drawImage(yoloImg, 'yolo-canvas', 'yolo-panel', data.image_base64, 'jpeg', null);
         }
         
         if (!dataLoaded.live) {
@@ -738,6 +822,11 @@
                 const sel = document.getElementById('dataset-select');
                 if (!sel) return;
                 sel.innerHTML = '';
+                // Add camera option first
+                const camOpt = document.createElement('option');
+                camOpt.value = '__live_camera__';
+                camOpt.textContent = '📷 实时摄像头';
+                sel.appendChild(camOpt);
                 for (const ds of data.datasets) {
                     const opt = document.createElement('option');
                     opt.value = ds.name;
@@ -746,12 +835,11 @@
                     sel.appendChild(opt);
                 }
                 if (data.datasets.length === 0) {
-                    sel.innerHTML = '<option value="">No datasets</option>';
+                    // Camera option already added above
                 } else {
-                    // Auto-select and load first dataset on page load
-                    sel.value = data.datasets[0].name;
-                    console.log('[Dataset] Auto-loading first dataset:', data.datasets[0].name);
-                    // Trigger the change event to load PLY and start playback
+                    // Default: select camera mode
+                    sel.value = '__live_camera__';
+                    console.log('[Dataset] Default mode: live camera');
                     sel.dispatchEvent(new Event('change'));
                 }
             }
@@ -773,7 +861,35 @@
                 btn.disabled = true;
             }
             
+            // ====== Camera mode ======
+            if (selectedDataset === '__live_camera__') {
+                try {
+                    // Stop any dataset playback first
+                    await fetch('/api/playback/stop', {method: 'POST'});
+                    const resp = await fetch('/api/camera/start', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({camera_index: 0, fps: 10})
+                    });
+                    const data = await resp.json();
+                    console.log('[Camera] Started:', data);
+                    if (btn) { btn.textContent = 'Camera Live'; btn.disabled = false; }
+                    // Clear 3D scene for camera mode
+                    if (threeRenderer && threeRenderer.enabled) {
+                        threeRenderer.clearTrajectory();
+                        threeRenderer.clearDensePoints();
+                    }
+                } catch(e) {
+                    console.error('[Camera] Failed to start:', e);
+                    if (btn) { btn.textContent = 'Camera Error'; setTimeout(() => { btn.textContent = 'Test Frame'; btn.disabled = false; }, 2000); }
+                }
+                return;
+            }
+            
+            // ====== Dataset mode ======
             try {
+                // Stop camera if running
+                await fetch('/api/camera/stop', {method: 'POST'});
                 const resp = await fetch('/api/select_dataset', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
