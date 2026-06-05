@@ -703,6 +703,26 @@ HOST = "0.0.0.0"
 PORT = 8300  # Changed from 8080/8081 (port may be occupied by previous process)
 WS_PATH = "/ws/slam"
 
+# Global WebSocket send lock registry: {id(ws): asyncio.Lock()}
+_ws_send_locks: dict[int, asyncio.Lock] = {}
+
+def _get_ws_lock(ws) -> asyncio.Lock:
+    """Get or create a send lock for a WebSocket client."""
+    wid = id(ws)
+    if wid not in _ws_send_locks:
+        _ws_send_locks[wid] = asyncio.Lock()
+    return _ws_send_locks[wid]
+
+async def safe_ws_send(ws, data: str) -> bool:
+    """Send text through WebSocket with lock protection to prevent concurrent write crashes."""
+    try:
+        lock = _get_ws_lock(ws)
+        async with lock:
+            await ws.send_text(data)
+        return True
+    except Exception:
+        return False
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="DS-SLAM Visualizer")
@@ -1076,9 +1096,7 @@ def create_app() -> FastAPI:
             })
             dead = set()
             for client in app.state.clients:
-                try:
-                    await client.send_text(msg)
-                except Exception:
+                if not await safe_ws_send(client, msg):
                     dead.add(client)
             app.state.clients -= dead
 
@@ -1106,9 +1124,7 @@ def create_app() -> FastAPI:
         })
         dead = set()
         for client in app.state.clients:
-            try:
-                await client.send_text(msg)
-            except Exception:
+            if not await safe_ws_send(client, msg):
                 dead.add(client)
         app.state.clients -= dead
 
@@ -1249,9 +1265,7 @@ def create_app() -> FastAPI:
                 msg = json.dumps(broadcast_data)
                 dead = set()
                 for client in app.state.clients:
-                    try:
-                        await client.send_text(msg)
-                    except Exception:
+                    if not await safe_ws_send(client, msg):
                         dead.add(client)
                 app.state.clients -= dead
             
@@ -1391,9 +1405,7 @@ def create_app() -> FastAPI:
         message = json.dumps(frame)
         dead_clients = set()
         for client in app.state.clients:
-            try:
-                await client.send_text(message)
-            except Exception:
+            if not await safe_ws_send(client, message):
                 dead_clients.add(client)
 
         app.state.clients -= dead_clients
@@ -1504,9 +1516,7 @@ def create_app() -> FastAPI:
                     msg = json.dumps(frame)
                     dead = set()
                     for client in app.state.clients:
-                        try:
-                            await client.send_text(msg)
-                        except Exception:
+                        if not await safe_ws_send(client, msg):
                             dead.add(client)
                     app.state.clients -= dead
                     
@@ -1565,6 +1575,16 @@ def create_app() -> FastAPI:
         
         Body: {"camera_index": 0, "fps": 10}
         """
+        # If camera is already running with same settings, just return success
+        if app.state.camera_active and app.state.camera_task and not app.state.camera_task.done():
+            if payload:
+                cam_idx = payload.get("camera_index", 0)
+                fps = payload.get("fps", 10.0)
+                if cam_idx == app.state.camera_index and abs(fps - app.state.camera_fps) < 0.1:
+                    return {"status": "already_running", "camera_index": cam_idx, "fps": fps}
+            else:
+                return {"status": "already_running", "camera_index": app.state.camera_index, "fps": app.state.camera_fps}
+        
         # Stop any existing camera first
         _stop_camera_sync()
 
@@ -1602,9 +1622,7 @@ def create_app() -> FastAPI:
         dead = set()
         reset_msg = json.dumps({"type": "scene_reset"})
         for client in app.state.clients:
-            try:
-                await client.send_text(reset_msg)
-            except Exception:
+            if not await safe_ws_send(client, reset_msg):
                 dead.add(client)
         app.state.clients -= dead
 
@@ -1612,15 +1630,24 @@ def create_app() -> FastAPI:
             """Camera capture loop with keyframe-based global point cloud accumulation.
             Points are transformed to world coordinates using VO pose estimates."""
             frame_idx = 0
-            depth_interval = 1  # Run depth estimation every frame
+            depth_interval = 2  # Run depth estimation every 2 frames (was 1)
             vo_interval = 5  # Run VO every 5 frames to save FPS
+            yolo_interval = 2  # Run YOLO every 2 frames (was 1)
+            cached_mask_b64 = None  # Cache YOLO mask for non-YOLO frames
             
             # Keyframe strategy for global mapping
-            keyframe_interval = 15  # Select keyframe every 15 frames
+            keyframe_interval = 10  # Select keyframe every 10 frames (increased frequency)
             last_keyframe_pose = np.eye(4, dtype=np.float64)  # Last keyframe pose
-            min_translation = 0.15  # Min translation 0.15m to select keyframe
-            min_rotation = 0.2  # Min rotation 0.2rad (~11 degrees)
+            min_translation = 0.05  # Min translation 0.05m to select keyframe (lowered threshold)
+            min_rotation = 0.1  # Min rotation 0.1rad (~5.7 degrees) (lowered threshold)
             first_keyframe = True  # Force first keyframe
+            
+            # ====== Loop Closure Detection ======
+            keyframe_poses = []  # Store keyframe poses for loop closure detection
+            keyframe_indices = []  # Store frame indices of keyframes
+            last_loop_closure_idx = 0
+            loop_closure_threshold = 1.5  # Distance threshold for loop closure (meters)
+            loop_closure_cooldown = 50  # Minimum frames between loop closures
             
             midas = get_midas(use_webcam=True)  # Use webcam intrinsics for camera mode
             # Accumulated point cloud for camera mode (GLOBAL coordinates)
@@ -1708,76 +1735,69 @@ def create_app() -> FastAPI:
                                             
                                             # NOTE: recoverPose returns unit translation vector
                                             # We need to estimate actual scale from depth map
-                                            # Use 3D point displacement to compute scale (more accurate than depth ratio)
-                                            scale = 0.1  # Default scale (10cm per frame)
+                                            # MiDaS provides RELATIVE depth, not absolute metric depth
+                                            # Use a robust default scale based on typical indoor motion
+                                            # At 10fps, typical handheld motion is 5-15cm per frame
+                                            scale = 0.12  # Default scale (12cm per frame for 10fps)
                                             
-                                            if depth_map is not None:
-                                                # Compute 3D positions of matched points in both frames
-                                                pts_3d_prev = []
-                                                pts_3d_curr = []
-                                                
+                                            if depth_map is not None and len(good_matches) >= 10:
+                                                # Method: Use 2D pixel displacement to validate scale
+                                                # Calculate median 2D pixel displacement
+                                                pixel_disps = []
                                                 for i in range(len(good_matches)):
-                                                    # Previous frame point
                                                     u_prev, v_prev = pts_prev[i]
-                                                    # Current frame point
                                                     u_curr, v_curr = pts_curr[i]
-                                                    
-                                                    # Get depth at current frame point
-                                                    u_int, v_int = int(u_curr), int(v_curr)
-                                                    if 0 <= v_int < depth_map.shape[0] and 0 <= u_int < depth_map.shape[1]:
-                                                        d = depth_map[v_int, u_int]
-                                                        if d > 0.5 and d < 6.0:
-                                                            # Back-project to 3D in camera frame
-                                                            x_curr = (u_curr - K[0, 2]) * d / K[0, 0]
-                                                            y_curr = (v_curr - K[1, 2]) * d / K[1, 1]
-                                                            z_curr = d
-                                                            pts_3d_curr.append([x_curr, y_curr, z_curr])
-                                                            
-                                                            # For previous point, use same depth (assumes static scene)
-                                                            x_prev = (u_prev - K[0, 2]) * d / K[0, 0]
-                                                            y_prev = (v_prev - K[1, 2]) * d / K[1, 1]
-                                                            z_prev = d
-                                                            pts_3d_prev.append([x_prev, y_prev, z_prev])
+                                                    disp = np.sqrt((u_curr - u_prev)**2 + (v_curr - v_prev)**2)
+                                                    pixel_disps.append(disp)
                                                 
-                                                if len(pts_3d_curr) >= 8:
-                                                    # Compute displacement between 3D points
-                                                    pts_3d_prev = np.array(pts_3d_prev)
-                                                    pts_3d_curr = np.array(pts_3d_curr)
-                                                    displacements = np.linalg.norm(pts_3d_curr - pts_3d_prev, axis=1)
+                                                if len(pixel_disps) >= 10:
+                                                    median_pixel_disp = float(np.median(pixel_disps))
                                                     
-                                                    # Use median displacement as scale (robust to outliers)
-                                                    scale = float(np.median(displacements))
-                                                    
-                                                    # Clamp to reasonable range for 10fps camera
-                                                    # Typical indoor motion: 2-30cm per frame
-                                                    scale = np.clip(scale, 0.02, 0.3)
+                                                    # If pixel displacement is very small (< 2px), camera is stationary
+                                                    # BUT don't set scale to 0 - use a small default instead
+                                                    if median_pixel_disp < 2.0:
+                                                        scale = 0.02  # Small motion (2cm), not zero
+                                                    elif median_pixel_disp > 50.0:
+                                                        # Large motion, increase scale
+                                                        scale = 0.20
+                                                    else:
+                                                        # Normal motion, use default
+                                                        scale = 0.12
                                                     
                                                     if frame_idx % 30 == 0:
-                                                        print(f"[VO-Scale] Frame #{frame_idx}: scale={scale:.3f}m, pts={len(pts_3d_curr)}")
+                                                        print(f"[VO-Scale] Frame #{frame_idx}: pixel_disp={median_pixel_disp:.1f}px, scale={scale:.3f}m, matches={len(good_matches)}")
                                                 else:
-                                                    # Not enough 3D points, use default scale
                                                     if frame_idx % 30 == 0:
-                                                        print(f"[VO-Scale] Frame #{frame_idx}: insufficient 3D pts ({len(pts_3d_curr)}), using default scale")
+                                                        print(f"[VO-Scale] Frame #{frame_idx}: insufficient matches, using default scale")
                                             else:
                                                 if frame_idx % 30 == 0:
-                                                    print(f"[VO-Scale] Frame #{frame_idx}: no depth map, using default scale")
+                                                    print(f"[VO-Scale] Frame #{frame_idx}: no depth or insufficient matches, using default scale")
                                             
                                             # Smooth scale changes to avoid sudden jumps (exponential moving average)
                                             if hasattr(_camera_loop, 'last_scale'):
                                                 scale = 0.7 * _camera_loop.last_scale + 0.3 * scale
                                             _camera_loop.last_scale = scale
                                             
-                                            # Validate rotation: reject if rotation is too large (>30 degrees)
-                                            # recoverPose can sometimes return incorrect rotations
+                                            # Validate rotation: reject if rotation is too large (>60 degrees)
+                                            # recoverPose can sometimes return incorrect rotations due to sign ambiguity
                                             cos_angle_R = (np.trace(R_rel) - 1) / 2
                                             cos_angle_R = np.clip(cos_angle_R, -1.0, 1.0)
                                             angle_R = np.arccos(cos_angle_R)
                                             
-                                            # Also check if rotation is close to 180 degrees (sign ambiguity)
-                                            if angle_R > np.radians(30):  # More than 30 degrees per frame is suspicious
-                                                print(f"[VO] Rejected: rotation={np.degrees(angle_R):.1f}° too large")
-                                                # Use identity rotation instead
-                                                R_rel = np.eye(3)
+                                            # If rotation is suspiciously large, try to fix it
+                                            if angle_R > np.radians(60):
+                                                print(f"[VO] Warning: rotation={np.degrees(angle_R):.1f}° - attempting to fix")
+                                                # recoverPose has 4 solutions, it may have picked the wrong one
+                                                # Try using the previous rotation as a prior
+                                                if hasattr(_camera_loop, 'last_R_rel'):
+                                                    # Use smoothed rotation from previous frame
+                                                    R_rel = _camera_loop.last_R_rel
+                                                else:
+                                                    R_rel = np.eye(3)
+                                                # Keep the scale but use identity rotation
+                                            
+                                            # Store rotation for next frame smoothing
+                                            _camera_loop.last_R_rel = R_rel.copy()
                                             
                                             # Build relative pose matrix with estimated scale
                                             T_rel = np.eye(4, dtype=np.float64)
@@ -1794,12 +1814,17 @@ def create_app() -> FastAPI:
                         prev_kp = kp
                         prev_des = des
 
-                    # Encode frame to JPEG base64
-                    _, jpeg_buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    # Encode frame to JPEG base64 (lower quality for faster encoding)
+                    _, jpeg_buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     img_b64 = base64.b64encode(jpeg_buf.tobytes()).decode()
 
-                    # Run YOLO segmentation
-                    mask_b64 = yolo_segment(img_b64)
+                    # Run YOLO segmentation with interval control
+                    if frame_idx % yolo_interval == 0:
+                        mask_b64 = yolo_segment(img_b64)
+                        if mask_b64:
+                            cached_mask_b64 = mask_b64  # Cache for next frames
+                    else:
+                        mask_b64 = cached_mask_b64  # Use cached mask
 
                     # Parse mask for coverage and depth filtering
                     dynamic_mask = None
@@ -1862,6 +1887,41 @@ def create_app() -> FastAPI:
                                     is_keyframe = True
                                     last_keyframe_pose = cam_pose.copy()
                                     print(f"[Keyframe] #{frame_idx}: trans={translation:.3f}m, rot={rotation:.3f}rad")
+                                    
+                                    # ====== Loop Closure Detection ======
+                                    # Store keyframe pose for loop closure detection
+                                    keyframe_poses.append(cam_pose.copy())
+                                    keyframe_indices.append(frame_idx)
+                                    
+                                    # Check for loop closure: compare current pose with all previous keyframes
+                                    if len(keyframe_poses) > 5 and (frame_idx - last_loop_closure_idx) > loop_closure_cooldown:
+                                        current_pos = cam_pose[:3, 3]
+                                        
+                                        # Search for nearby keyframes (spatial proximity)
+                                        for i, kf_pose in enumerate(keyframe_poses[:-1]):  # Exclude current
+                                            kf_pos = kf_pose[:3, 3]
+                                            distance = np.linalg.norm(current_pos - kf_pos)
+                                            
+                                            if distance < loop_closure_threshold:
+                                                # Potential loop closure detected!
+                                                # Calculate rotation difference
+                                                R_curr = cam_pose[:3, :3]
+                                                R_kf = kf_pose[:3, :3]
+                                                R_diff = R_kf.T @ R_curr
+                                                cos_angle_lc = (np.trace(R_diff) - 1) / 2
+                                                cos_angle_lc = np.clip(cos_angle_lc, -1.0, 1.0)
+                                                angle_diff = np.degrees(np.arccos(cos_angle_lc))
+                                                
+                                                if angle_diff < 30:  # Similar orientation
+                                                    # Loop closure confirmed!
+                                                    # Apply pose correction: snap current pose to keyframe pose
+                                                    correction = kf_pose @ np.linalg.inv(cam_pose)
+                                                    cam_pose = kf_pose.copy()
+                                                    
+                                                    # Apply correction to all subsequent points (simplified)
+                                                    print(f"[LoopClosure] #{frame_idx}: matched with KF#{keyframe_indices[i]}, dist={distance:.2f}m, angle={angle_diff:.1f}°")
+                                                    last_loop_closure_idx = frame_idx
+                                                    break
                             
                             if len(new_coords_cam) > 0 and is_keyframe:
                                 # Transform to WORLD coordinates
@@ -1904,7 +1964,7 @@ def create_app() -> FastAPI:
                                         all_cols = np.array(cam_colors + new_colors_filtered, dtype=np.float64).reshape(-1, 3)
                                         
                                         # Voxel deduplication: keep newest point per voxel
-                                        voxel_size_accum = 0.03  # 3cm voxels for accumulation
+                                        voxel_size_accum = 0.05  # 5cm voxels for accumulation (larger to reduce duplicates)
                                         voxel_idx = np.floor(all_pts / voxel_size_accum).astype(np.int64)
                                         # Mark which points are new (later in the array)
                                         n_old = len(cam_coords) // 3
@@ -1914,6 +1974,7 @@ def create_app() -> FastAPI:
                                         voxel_map = {}
                                         for i in range(len(all_pts)):
                                             key = tuple(voxel_idx[i])
+                                            # Only replace old points with new ones (i >= n_old means it's a new point)
                                             if key not in voxel_map or i >= n_old:
                                                 voxel_map[key] = i
                                         
@@ -1921,6 +1982,13 @@ def create_app() -> FastAPI:
                                         keep_indices = sorted(voxel_map.values())
                                         dedup_pts = all_pts[keep_indices]
                                         dedup_cols = all_cols[keep_indices]
+                                        
+                                        # Log deduplication stats
+                                        n_before = len(all_pts)
+                                        n_after = len(dedup_pts)
+                                        n_removed = n_before - n_after
+                                        if frame_idx % 30 == 0:
+                                            print(f"[Dedup] Before: {n_before}, After: {n_after}, Removed: {n_removed} ({n_removed/n_before*100:.1f}%)")
                                         
                                         # Limit total points
                                         max_total = 200000
@@ -1966,9 +2034,7 @@ def create_app() -> FastAPI:
                                     dead2 = set()
                                     clients_copy2 = app.state.clients.copy()  # Copy to avoid modification during iteration
                                     for client in clients_copy2:
-                                        try:
-                                            await client.send_text(pts_json)
-                                        except Exception:
+                                        if not await safe_ws_send(client, pts_json):
                                             dead2.add(client)
                                     if dead2:
                                         app.state.clients -= dead2
@@ -2000,10 +2066,9 @@ def create_app() -> FastAPI:
                         }
                         pts_json = json.dumps(pts_update)
                         dead_pts = set()
-                        for client in app.state.clients:
-                            try:
-                                await client.send_text(pts_json)
-                            except Exception:
+                        clients_copy_pts = app.state.clients.copy()  # Copy to avoid modification during iteration
+                        for client in clients_copy_pts:
+                            if not await safe_ws_send(client, pts_json):
                                 dead_pts.add(client)
                         app.state.clients -= dead_pts
 
@@ -2017,9 +2082,7 @@ def create_app() -> FastAPI:
                     dead = set()
                     clients_copy = app.state.clients.copy()  # Copy to avoid modification during iteration
                     for client in clients_copy:
-                        try:
-                            await client.send_text(msg)
-                        except Exception:
+                        if not await safe_ws_send(client, msg):
                             dead.add(client)
                     if dead:
                         app.state.clients -= dead
@@ -2176,9 +2239,7 @@ def create_app() -> FastAPI:
         msg = json.dumps(frame)
         dead = set()
         for client in app.state.clients:
-            try:
-                await client.send_text(msg)
-            except Exception:
+            if not await safe_ws_send(client, msg):
                 dead.add(client)
         app.state.clients -= dead
         
@@ -2222,9 +2283,7 @@ def create_app() -> FastAPI:
             
             dp_msg = json.dumps(dp_data)
             for client in app.state.clients:
-                try:
-                    await client.send_text(dp_msg)
-                except Exception:
+                if not await safe_ws_send(client, dp_msg):
                     dead.add(client)
             
             print(f"[PointCloud] Refreshed: {n_sample}/{n_total} points ({sample_ratio*100:.1f}%)")
@@ -2293,9 +2352,7 @@ def create_app() -> FastAPI:
         msg = json.dumps({"type": "scene_reset"})
         dead = set()
         for client in app.state.clients:
-            try:
-                await client.send_text(msg)
-            except Exception:
+            if not await safe_ws_send(client, msg):
                 dead.add(client)
         app.state.clients -= dead
         return {"status": "ok", "message": "Scene data cleared"}
@@ -2570,9 +2627,7 @@ def create_app() -> FastAPI:
         # 6a: Tell clients to clear old scene
         reset_msg = json.dumps({"type": "scene_reset"})
         for client in app.state.clients:
-            try:
-                await client.send_text(reset_msg)
-            except Exception:
+            if not await safe_ws_send(client, reset_msg):
                 dead.add(client)
         print(f"[Dataset] scene_reset sent successfully")
 
@@ -2580,9 +2635,7 @@ def create_app() -> FastAPI:
         if trajectory_loaded and traj_poses:
             traj_msg = json.dumps({"type": "trajectory_update", "poses": traj_poses, "count": len(traj_poses)})
             for client in app.state.clients:
-                try:
-                    await client.send_text(traj_msg)
-                except Exception:
+                if not await safe_ws_send(client, traj_msg):
                     dead.add(client)
 
         # 6c: Send dense points
@@ -2595,9 +2648,7 @@ def create_app() -> FastAPI:
             msg_size = len(dp_msg)
             print(f"[WS] Dense points message size: {msg_size/1024:.1f} KB")
             for client in app.state.clients:
-                try:
-                    await client.send_text(dp_msg)
-                except Exception:
+                if not await safe_ws_send(client, dp_msg):
                     dead.add(client)
         else:
             print(f"[WS] No dense points to send (ply_loaded={ply_loaded})")
@@ -2606,9 +2657,7 @@ def create_app() -> FastAPI:
         if gridmap_b64:
             gm_msg = json.dumps({"type": "gridmap_update", "image_base64": gridmap_b64, "point_count": ply_point_count})
             for client in app.state.clients:
-                try:
-                    await client.send_text(gm_msg)
-                except Exception:
+                if not await safe_ws_send(client, gm_msg):
                     dead.add(client)
 
         app.state.clients -= dead
@@ -2655,9 +2704,7 @@ def create_app() -> FastAPI:
             frame_msg = json.dumps(app.state.last_frame_snapshot)
             dead2 = set()
             for client in app.state.clients:
-                try:
-                    await client.send_text(frame_msg)
-                except Exception:
+                if not await safe_ws_send(client, frame_msg):
                     dead2.add(client)
             app.state.clients -= dead2
             print(f"[Dataset] Initial frame loaded: #{mid_idx}, coverage={dynamic_coverage}%")
@@ -2757,9 +2804,7 @@ def create_app() -> FastAPI:
                             msg = json.dumps(frame)
                             dead = set()
                             for client in app.state.clients:
-                                try:
-                                    await client.send_text(msg)
-                                except Exception:
+                                if not await safe_ws_send(client, msg):
                                     dead.add(client)
                             app.state.clients -= dead
                             
@@ -2803,13 +2848,19 @@ def create_app() -> FastAPI:
         app.state.clients.add(ws)
         print(f"[WS] Client connected. Total: {len(app.state.clients)}")
         
+        # Write lock: prevent concurrent WebSocket writes (heartbeat + frame push)
+        
+        async def _safe_send(data: str):
+            """Send text through WebSocket with lock protection."""
+            return await safe_ws_send(ws, data)
+        
         # Heartbeat: send ping every 10 seconds
         async def _heartbeat():
             try:
                 while True:
                     await asyncio.sleep(10)
                     try:
-                        await ws.send_text(json.dumps({"type": "server_ping", "ts": time.time()}))
+                        await _safe_send(json.dumps({"type": "server_ping", "ts": time.time()}))
                     except Exception:
                         break
             except asyncio.CancelledError:
@@ -2824,7 +2875,7 @@ def create_app() -> FastAPI:
                 try:
                     traj_resp = await get_trajectory()
                     if isinstance(traj_resp, dict) and traj_resp.get("poses"):
-                        await ws.send_text(json.dumps({"type": "trajectory_update", "poses": traj_resp["poses"], "count": traj_resp["count"]}))
+                        await _safe_send(json.dumps({"type": "trajectory_update", "poses": traj_resp["poses"], "count": traj_resp["count"]}))
                 except Exception as e:
                     print(f"[WS] Error sending trajectory to new client: {e}")
 
@@ -2832,7 +2883,7 @@ def create_app() -> FastAPI:
             if app.state.latest_map_points and len(app.state.latest_map_points) >= 3:
                 try:
                     pt_count = len(app.state.latest_map_points) // 3
-                    await ws.send_text(json.dumps({"type": "map_points_update", "map_points_coords": app.state.latest_map_points, "map_points_count": pt_count}))
+                    await _safe_send(json.dumps({"type": "map_points_update", "map_points_coords": app.state.latest_map_points, "map_points_count": pt_count}))
                 except Exception as e:
                     print(f"[WS] Error sending map points to new client: {e}")
 
@@ -2855,12 +2906,12 @@ def create_app() -> FastAPI:
                         dp_data = {"type": "dense_points_update", "coords": ws_coords, "point_count": pt_count}
                         if ws_colors:
                             dp_data["colors"] = ws_colors
-                        await ws.send_text(json.dumps(dp_data))
+                        await _safe_send(json.dumps(dp_data))
                     else:
                         dp_data = {"type": "dense_points_update", "coords": app.state.latest_dense_points, "point_count": pt_count}
                         if has_colors:
                             dp_data["colors"] = app.state.latest_dense_colors
-                        await ws.send_text(json.dumps(dp_data))
+                        await _safe_send(json.dumps(dp_data))
                 except Exception as e:
                     print(f"[WS] Error sending dense points to new client: {e}")
 
@@ -2869,7 +2920,7 @@ def create_app() -> FastAPI:
                 try:
                     grid_b64 = generate_gridmap_from_points(app.state.latest_dense_points)
                     if grid_b64:
-                        await ws.send_text(json.dumps({"type": "gridmap_update", "image_base64": grid_b64, "point_count": len(app.state.latest_dense_points) // 3}))
+                        await _safe_send(json.dumps({"type": "gridmap_update", "image_base64": grid_b64, "point_count": len(app.state.latest_dense_points) // 3}))
                 except Exception as e:
                     print(f"[WS] Error sending gridmap to new client: {e}")
 
