@@ -7,15 +7,18 @@ orbslam3/build/
 orbslam3/build-mingw/
 orbslam3/build_static/
 orbslam3/build_clang/
-orbslam3/lib/
-orbslam3/Thirdparty/DBoW2/lib/
+orbslam3/build_linux/
+orbslam3/Thirdparty/DBoW2/build/
+orbslam3/Thirdparty/DBoW2/build_linux/
 orbslam3/Thirdparty/DBoW2/build_static/
 orbslam3/Thirdparty/DBoW2/build_clang/
 orbslam3/Thirdparty/**/build_clang/
 orbslam3/Thirdparty/g2o/bin/
 orbslam3/Thirdparty/g2o/build/
 orbslam3/Thirdparty/g2o/build_clang/
+orbslam3/Thirdparty/g2o/build_linux/
 slam-system/build/
+slam-system/build_linux/
 build/
 
 # Compiled executables (keep source, ignore binaries)
